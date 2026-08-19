@@ -1,0 +1,195 @@
+"""
+Flask app: receives ImprovMX's webhook for each incoming email, applies
+the move/command, and emails both players the new board -- the actual
+PBM replacement.
+
+Deploy this somewhere reachable (Render, Railway, Fly.io, a small VPS...),
+then in the ImprovMX dashboard set your game's alias (e.g.
+bg@felixsalmon.com) to forward to:
+
+    https://yourhost/inbound
+
+See README.md for the full walkthrough.
+
+Run locally for testing with:  python3 app.py
+(then use ngrok or similar to expose it to ImprovMX while testing)
+"""
+
+import os
+import tempfile
+import threading
+
+from flask import Flask, request
+
+from game import IllegalMove, CommandError, TurnRecord, CubeEvent
+from render import save_board_png
+from state import Store
+from email_io import parse_inbound_improvmx, send_board_email, send_text_email
+from admin import create_and_announce
+from board import WHITE, BLACK, other
+
+DB_PATH = os.environ.get("BACKGAMMON_DB", "backgammon.db")
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN")
+store = Store(DB_PATH)
+
+app = Flask(__name__)
+
+
+def _bg(fn, *args, **kwargs):
+    """Run fn in a background thread so the webhook response comes back
+    fast (reducing the odds ImprovMX times out and retries), and catch
+    any exception so a failed send doesn't vanish without a trace -- it
+    still shows up in the server logs."""
+    def wrapper():
+        try:
+            fn(*args, **kwargs)
+        except Exception as e:
+            print(f"[background task error] {fn.__name__}: {e}")
+    threading.Thread(target=wrapper, daemon=True).start()
+
+
+@app.route("/admin/start_game", methods=["POST"])
+def admin_start_game():
+    """Create a new game against THIS deployment's database and email the
+    opening board. Needed because a deployed instance's SQLite file isn't
+    reachable from your laptop -- this is the only way to reach it.
+
+    Protected by a shared-secret token (env var ADMIN_TOKEN). If that env
+    var isn't set, this route refuses all requests.
+
+    curl example:
+        curl -X POST https://yourhost/admin/start_game \\
+          -H "X-Admin-Token: $ADMIN_TOKEN" \\
+          -H "Content-Type: application/json" \\
+          -d '{"label":"g1","white_email":"felix@felixsalmon.com","white_name":"Felix",
+               "black_email":"simon@example.com","black_name":"Simon"}'
+    """
+    if not ADMIN_TOKEN or request.headers.get("X-Admin-Token") != ADMIN_TOKEN:
+        return ("forbidden", 403)
+
+    data = request.get_json(force=True, silent=True) or {}
+    required = ["label", "white_email", "white_name", "black_email", "black_name"]
+    missing = [k for k in required if not data.get(k)]
+    if missing:
+        return (f"missing fields: {', '.join(missing)}", 400)
+
+    gid = create_and_announce(
+        store, data["label"], data["white_email"], data["white_name"],
+        data["black_email"], data["black_name"],
+    )
+    return ({"game_id": gid}, 200)
+
+
+@app.route("/inbound", methods=["POST"])
+def inbound():
+    payload = request.get_json(force=True, silent=True) or {}
+
+    # Webhook senders retry on timeouts and network hiccups as standard
+    # practice -- ImprovMX includes a stable message-id we can use to make
+    # sure a retried delivery of the same email is a harmless no-op rather
+    # than re-applying (or wrongly rejecting) the same move twice.
+    message_id = payload.get("message-id")
+    if message_id and store.seen_message(message_id):
+        return ("", 204)
+
+    msg = parse_inbound_improvmx(payload)
+    sender, subject, body = msg["sender"], msg["subject"], msg["body"]
+
+    if not sender:
+        return ("", 204)
+
+    row = store.find_game_for_player(sender)
+    if row is None:
+        matches = store.list_for_player(sender)
+        if len(matches) > 1:
+            labels = ", ".join(f"[{lbl}]" for _, lbl in matches)
+            _bg(send_text_email, sender, "Which game?",
+                f"You have more than one game going ({labels}). "
+                f"Put the game label at the start of your subject, e.g. "
+                f"'[{matches[0][1]}] 24/18 13/11'.")
+        else:
+            _bg(send_text_email, sender, "No game found",
+                "I couldn't find a backgammon game with this address on it.")
+        return ("", 204)
+
+    game = row["game"]
+    player = WHITE if sender == row["white_email"] else BLACK
+    input_text = _strip_label(subject, row["label"])
+
+    try:
+        result = game.process_input(player, input_text, body)
+    except (IllegalMove, CommandError) as e:
+        _bg(send_text_email, sender, "Not so fast", f"'{input_text}': {e}")
+        return ("", 204)
+
+    store.save(row["id"], game)
+    _bg(_notify_both, row, game, body, result)
+    return ("", 204)
+
+
+def _notify_both(row, game, message, result):
+    note = None
+    if isinstance(result, str):
+        note = result
+    elif isinstance(result, CubeEvent):
+        white_name, black_name = row["white_name"], row["black_name"]
+        who = white_name if result.player == WHITE else black_name
+        if result.kind == "offered":
+            note = f"{who} offers to double to {result.value}."
+        elif result.kind == "taken":
+            note = f"{who} takes the double -- cube is now at {result.value}."
+        elif result.kind == "dropped":
+            note = f"{who} drops."
+        elif result.kind == "resigned":
+            note = f"{who} resigns."
+    elif isinstance(result, TurnRecord) and result.hits:
+        note = f"Hit on: {', '.join(str(p) for p in result.hits)}"
+
+    for auto in game.last_auto_played:
+        who = row["white_name"] if auto.player == WHITE else row["black_name"]
+        if auto.move_text == "(no legal move)":
+            piece = f"{who} had no legal move."
+        else:
+            piece = f"{who} was forced: {auto.move_text}."
+        note = (note + " " if note else "") + piece
+
+    if game.is_over():
+        winner_name = row["white_name"] if game.winner == WHITE else row["black_name"]
+        win_note = f"{winner_name} wins at {game.cube_value}!"
+        note = (note + " -- " if note else "") + win_note
+
+    with tempfile.TemporaryDirectory() as tmp:
+        png_path = os.path.join(tmp, "board.png")
+        save_board_png(
+            game.board, png_path,
+            to_move=game.to_move if not game.is_over() else None,
+            dice=game.dice if (not game.is_over() and game.awaiting == "move") else None,
+            last_message=message,
+            white_name=row["white_name"], black_name=row["black_name"],
+            turn_no=len(game.history) + 1,
+            cube_value=game.cube_value, cube_owner=game.cube_owner,
+            status_text=game.status_text(row["white_name"], row["black_name"]),
+        )
+        subj = f"[{row['label']}] {_subject_summary(game, result, row)}"
+        send_board_email([row["white_email"], row["black_email"]], subj, message, png_path,
+                          extra_note=note)
+
+
+def _subject_summary(game, result, row):
+    if isinstance(result, TurnRecord):
+        return f"{result.player} played {result.move_text}"
+    if isinstance(result, CubeEvent):
+        return f"{result.kind} ({result.value})"
+    return "update"
+
+
+def _strip_label(subject, label):
+    prefix = f"[{label}]"
+    s = subject.strip()
+    if s.lower().startswith(prefix.lower()):
+        s = s[len(prefix):].strip()
+    return s
+
+
+if __name__ == "__main__":
+    app.run(port=int(os.environ.get("PORT", 5000)), debug=True)
