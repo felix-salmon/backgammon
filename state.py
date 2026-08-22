@@ -26,6 +26,17 @@ CREATE TABLE IF NOT EXISTS processed_messages (
     message_id TEXT PRIMARY KEY,
     processed_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id INTEGER NOT NULL UNIQUE,
+    winner_email TEXT NOT NULL,
+    loser_email TEXT NOT NULL,
+    points INTEGER NOT NULL,
+    multiplier INTEGER NOT NULL,
+    cube_value INTEGER NOT NULL,
+    win_reason TEXT NOT NULL,
+    recorded_at REAL NOT NULL
+);
 """
 
 
@@ -88,7 +99,7 @@ class Store:
         if label:
             for gid in ids:
                 row = self.load(gid)
-                if row and row["label"] == label:
+                if row and row["label"].lower() == label.lower():
                     return row
             return None
         if len(ids) == 1:
@@ -118,3 +129,36 @@ class Store:
             )
             con.commit()
             return cur.rowcount == 0
+
+    def record_result(self, game_id, winner_email, loser_email, points, multiplier,
+                       cube_value, win_reason):
+        """Records a finished game's outcome for the running tally. Keyed
+        uniquely by game_id, so calling this more than once for the same
+        game (e.g. from a retried webhook) only records it once."""
+        with closing(sqlite3.connect(self.path)) as con:
+            cur = con.execute(
+                "INSERT OR IGNORE INTO results "
+                "(game_id, winner_email, loser_email, points, multiplier, cube_value, "
+                "win_reason, recorded_at) VALUES (?,?,?,?,?,?,?,?)",
+                (game_id, winner_email, loser_email, points, multiplier, cube_value,
+                 win_reason, time.time()),
+            )
+            con.commit()
+            return cur.rowcount == 1
+
+    def get_tally(self, email_a, email_b):
+        """Aggregate head-to-head record between two players across every
+        completed game between them, regardless of label."""
+        with closing(sqlite3.connect(self.path)) as con:
+            rows = con.execute(
+                "SELECT winner_email, loser_email, points FROM results WHERE "
+                "(winner_email=? AND loser_email=?) OR (winner_email=? AND loser_email=?)",
+                (email_a, email_b, email_b, email_a),
+            ).fetchall()
+        wins = {email_a: 0, email_b: 0}
+        points = {email_a: 0, email_b: 0}
+        for winner_email, loser_email, pts in rows:
+            wins[winner_email] = wins.get(winner_email, 0) + 1
+            points[winner_email] = points.get(winner_email, 0) + pts
+        return {"a": email_a, "b": email_b, "games_played": len(rows),
+                "wins": wins, "points": points}

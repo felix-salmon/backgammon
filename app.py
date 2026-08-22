@@ -16,6 +16,7 @@ Run locally for testing with:  python3 app.py
 """
 
 import os
+import re
 import tempfile
 import threading
 
@@ -98,10 +99,14 @@ def inbound():
     if not sender:
         return ("", 204)
 
-    row = store.find_game_for_player(sender)
+    label, input_text = _extract_label(subject)
+    row = store.find_game_for_player(sender, label=label)
     if row is None:
         matches = store.list_for_player(sender)
-        if len(matches) > 1:
+        if label:
+            _bg(send_text_email, sender, "No game found",
+                f"I couldn't find a game of yours labeled '[{label}]'.")
+        elif len(matches) > 1:
             labels = ", ".join(f"[{lbl}]" for _, lbl in matches)
             _bg(send_text_email, sender, "Which game?",
                 f"You have more than one game going ({labels}). "
@@ -114,7 +119,6 @@ def inbound():
 
     game = row["game"]
     player = WHITE if sender == row["white_email"] else BLACK
-    input_text = _strip_label(subject, row["label"])
 
     try:
         result = game.process_input(player, input_text, body)
@@ -123,8 +127,27 @@ def inbound():
         return ("", 204)
 
     store.save(row["id"], game)
+
+    if game.is_over():
+        summary = game.result_summary()
+        winner_email = row["white_email"] if summary["winner"] == WHITE else row["black_email"]
+        loser_email = row["black_email"] if summary["winner"] == WHITE else row["white_email"]
+        store.record_result(row["id"], winner_email, loser_email, summary["points"],
+                             summary["multiplier"], summary["cube_value"], game.win_reason)
+
     _bg(_notify_both, row, game, body, result)
     return ("", 204)
+
+
+@app.route("/tally", methods=["GET"])
+def tally():
+    """Head-to-head record between two players across every completed
+    game between them. GET /tally?a=alice@x.com&b=bob@x.com"""
+    a = (request.args.get("a") or "").strip().lower()
+    b = (request.args.get("b") or "").strip().lower()
+    if not a or not b:
+        return ("usage: /tally?a=email1&b=email2", 400)
+    return store.get_tally(a, b)
 
 
 def _notify_both(row, game, message, result):
@@ -155,8 +178,18 @@ def _notify_both(row, game, message, result):
 
     if game.is_over():
         winner_name = row["white_name"] if game.winner == WHITE else row["black_name"]
-        win_note = f"{winner_name} wins at {game.cube_value}!"
-        note = (note + " -- " if note else "") + win_note
+        summary = game.result_summary()
+        kind_suffix = {"normal": "", "gammon": " (gammon)", "backgammon": " (backgammon)"}[summary["kind"]]
+        win_note = f"{winner_name} wins {summary['points']} point(s){kind_suffix}!"
+
+        tally = store.get_tally(row["white_email"], row["black_email"])
+        wn, bn = row["white_name"], row["black_name"]
+        we, be = row["white_email"], row["black_email"]
+        tally_note = (
+            f" Head-to-head: {wn} {tally['wins'].get(we, 0)}-{tally['wins'].get(be, 0)} {bn} "
+            f"in games, {tally['points'].get(we, 0)}-{tally['points'].get(be, 0)} in points."
+        )
+        note = (note + " -- " if note else "") + win_note + tally_note
 
     with tempfile.TemporaryDirectory() as tmp:
         png_path = os.path.join(tmp, "board.png")
@@ -183,12 +216,13 @@ def _subject_summary(game, result, row):
     return "update"
 
 
-def _strip_label(subject, label):
-    prefix = f"[{label}]"
-    s = subject.strip()
-    if s.lower().startswith(prefix.lower()):
-        s = s[len(prefix):].strip()
-    return s
+def _extract_label(subject):
+    """Pull a leading '[label]' off a subject line, if present. Returns
+    (label_or_None, remaining_text)."""
+    m = re.match(r"^\[([^\]]+)\]\s*(.*)$", subject.strip())
+    if m:
+        return m.group(1), m.group(2)
+    return None, subject.strip()
 
 
 if __name__ == "__main__":

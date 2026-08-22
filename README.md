@@ -70,6 +70,34 @@ for you, always moving the most-advanced checker with each die. It's
 meant for pure races once no contact is possible -- it has no notion of
 safety, so don't use it while there's still a blot in play.
 
+## Running tally
+
+Every finished game is scored like a real money game: the winner gets the
+cube value, doubled to 2x if the loser bore off zero checkers (a gammon),
+or tripled to 3x if the loser also still had a checker on the bar or in
+the winner's home board (a backgammon). Declined doubles and resignations
+always score at just the current cube value -- no gammon/backgammon
+multiplier, since the board never finished.
+
+The running head-to-head score between two players (across every game
+they've played, regardless of label) shows up automatically in the
+win-announcement email, and you can check it any time at:
+
+```
+https://yourhost/tally?a=felix@felixsalmon.com&b=simon@example.com
+```
+
+## Multiple games, multiple people
+
+Nothing stops you from running several games at once -- against Simon,
+against someone else, whatever -- as long as each has its own label (see
+`start_game.py`/the admin endpoint). If a player only has one game going,
+they can leave the `[label]` off their subject entirely and it'll figure
+out which game they mean. Once someone has more than one game running,
+they need to lead their subject with the right label, e.g. `[g2] 24/18`
+-- if they forget, they'll get an email back listing their active labels
+rather than the move silently landing in the wrong game.
+
 ## Known simplification
 
 The engine validates that each move you submit is legal, but doesn't

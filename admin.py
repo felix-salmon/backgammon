@@ -26,7 +26,8 @@ def create_and_announce(store, label, white_email, white_name, black_email, blac
             cube_value=game.cube_value, cube_owner=game.cube_owner,
             status_text=game.status_text(white_name, black_name),
         )
-        subj = f"[{label}] New game! {white_name if game.to_move=='W' else black_name} to roll"
+        mover_name = white_name if game.to_move == "W" else black_name
+        subj = f"[{label}] New game! {mover_name} to play {game.dice[0]}-{game.dice[1]}"
         send_board_email(
             [white_email, black_email], subj,
             f"New game started. Reply with your move in the subject line, "

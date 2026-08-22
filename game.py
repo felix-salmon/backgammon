@@ -437,14 +437,35 @@ class Game:
             self.dice = ()
             self.awaiting = AWAIT_ROLL_OR_DOUBLE
 
+    def result_summary(self):
+        """Only meaningful once is_over(). Returns a dict describing the
+        finish: winner/loser colors, 'kind' (normal/gammon/backgammon),
+        the multiplier that implies, and the resulting points (cube value
+        times that multiplier)."""
+        if not self.is_over():
+            return None
+        winner = self.winner
+        loser = other(winner)
+        if self.win_reason == "normal" and self.board.off[loser] == 0:
+            if _is_backgammon(self.board, winner, loser):
+                kind, mult = "backgammon", 3
+            else:
+                kind, mult = "gammon", 2
+        else:
+            kind, mult = "normal", 1
+        return {
+            "winner": winner, "loser": loser, "kind": kind, "multiplier": mult,
+            "cube_value": self.cube_value, "points": self.cube_value * mult,
+        }
+
     def status_text(self, white_name="White", black_name="Black"):
         """Short human-readable line describing what's currently needed."""
         name = white_name if self.to_move == WHITE else black_name
         if self.is_over():
             winner_name = white_name if self.winner == WHITE else black_name
-            reason = {"normal": "", "drop": " (by drop)", "resignation": " (by resignation)"}.get(
-                self.win_reason, "")
-            return f"{winner_name} wins at {self.cube_value}{reason}!"
+            summary = self.result_summary()
+            kind_suffix = {"normal": "", "gammon": " (gammon)", "backgammon": " (backgammon)"}[summary["kind"]]
+            return f"{winner_name} wins {summary['points']} point(s){kind_suffix}!"
         if self.awaiting == AWAIT_DOUBLE_RESPONSE:
             doubler_name = white_name if self.pending_doubler == WHITE else black_name
             other_name = black_name if self.pending_doubler == WHITE else white_name
@@ -487,6 +508,20 @@ def _opening_roll():
         if w != b:
             starter = WHITE if w > b else BLACK
             return starter, (w, b)
+
+
+# ---------- scoring ----------
+
+def _is_backgammon(board, winner, loser):
+    """True if the loser still has a checker on the bar, or in the
+    WINNER's home board (the classic triple-value finish)."""
+    if board.bar[loser] > 0:
+        return True
+    home_range = range(1, 7) if winner == WHITE else range(19, 25)
+    for pt in home_range:
+        if board.owner_at_abs(pt) == loser:
+            return True
+    return False
 
 
 # ---------- move-sequence search (forced-move detection + greedy) ----------
