@@ -224,7 +224,7 @@ class Game:
 
         mover = self.to_move
         try:
-            hops = parse_moves(move_text, dice=self.dice)
+            hops = parse_moves(move_text, mover, dice=self.dice)
         except NotationError as e:
             raise IllegalMove(str(e))
 
@@ -236,11 +236,11 @@ class Game:
             die = _infer_die(work, mover, src, dest, remaining)
             if die is None:
                 raise IllegalMove(
-                    f"'{format_hop(src, dest)}' doesn't match any of your remaining dice {remaining}"
+                    f"'{format_hop(mover, src, dest)}' doesn't match any of your remaining dice {remaining}"
                 )
             ok, reason = is_legal_single(work, mover, src, dest, die)
             if not ok:
-                raise IllegalMove(f"'{format_hop(src, dest)}': {reason}")
+                raise IllegalMove(f"'{format_hop(mover, src, dest)}': {reason}")
 
             if dest != "off":
                 abs_dest = rel_to_abs(mover, dest)
@@ -408,7 +408,7 @@ class Game:
                 if owner is not None and owner != player and abs(work.count_at_abs(abs_dest)) == 1:
                     hits.append(dest)
             work.apply_single(player, src, dest, die)
-            display.append(format_hop(src, dest))
+            display.append(format_hop(player, src, dest))
 
         self.board = work
         move_text = " ".join(display) if display else "(no legal move)"

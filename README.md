@@ -41,6 +41,11 @@ Move notation -- any of these, mixed freely, even within the same turn:
 - `bar/19` or `bar-19` -- entering from the bar
 - `6/off` or `6-off` -- bearing off
 
+Point numbers always mean exactly what's printed on the board image --
+the same numbering for both colors. There's no "count from your own
+side" convention to remember; whatever number sits next to a checker in
+the picture is the number you type, whether you're White or Black.
+
 ## The doubling cube
 
 Exactly like PBM: send **`manual`** at any point and the game stops

@@ -32,9 +32,11 @@ def create_and_announce(store, label, white_email, white_name, black_email, blac
             [white_email, black_email], subj,
             f"New game started. Reply with your move in the subject line, "
             f"e.g. '[{label}] 24/18 13/11' or '[{label}] 24-18,13-11' or "
-            f"'[{label}] 2x24'. Send '[{label}] manual' any time to "
-            f"unlock the doubling cube, or '[{label}] greedy' to auto-play "
-            f"a pure race. Forced moves play themselves automatically.",
+            f"'[{label}] 2x24'. Point numbers are always exactly what's "
+            f"printed on the board picture, for either color. Send "
+            f"'[{label}] manual' any time to unlock the doubling cube, or "
+            f"'[{label}] greedy' to auto-play a pure race. Forced moves "
+            f"play themselves automatically.",
             png_path,
         )
     return gid

@@ -23,6 +23,9 @@ Move notation -- any of these, mixed freely:
     24/21 13/8       slash style
     24-21,13-8       PBeM style (hyphen + comma)
     2x24             shorthand: run 2 checkers off point 24, one per die
+
+Point numbers always mean exactly what's printed on the board image --
+same numbering for both colors, no need to count from your own side.
 """
 
 import os
