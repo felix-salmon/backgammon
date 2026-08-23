@@ -33,16 +33,42 @@ SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER)
 
 SUBJECT_PREFIX_RE = re.compile(r"^(re|fwd|fw)\s*:\s*", re.IGNORECASE)
 
+# Markers that reliably indicate "everything from here on is quoted history
+# from earlier in the thread", across Gmail, Apple Mail, and Outlook's
+# conventions. ImprovMX doesn't offer a pre-stripped body field, so this is
+# done by hand -- cut at whichever marker appears earliest in the text.
+_QUOTE_MARKERS = [
+    re.compile(r"^On .{0,140}wrote:\s*$", re.MULTILINE),      # Gmail / Apple Mail
+    re.compile(r"^>", re.MULTILINE),                          # any quoted line
+    re.compile(r"^-{2,}\s*Original Message\s*-{2,}", re.MULTILINE | re.IGNORECASE),
+    re.compile(r"^_{5,}\s*$", re.MULTILINE),                  # Outlook separator
+]
+
+
+def _strip_quoted_reply(text):
+    """Keep only the part of an email body written above the quoted
+    reply chain, if any -- otherwise a reply email ends up including
+    every previous message in the thread as if it were new text."""
+    if not text:
+        return text
+    cut_at = len(text)
+    for pattern in _QUOTE_MARKERS:
+        m = pattern.search(text)
+        if m and m.start() < cut_at:
+            cut_at = m.start()
+    return text[:cut_at].strip()
+
 
 def parse_inbound_improvmx(payload):
     """payload: the parsed JSON body ImprovMX POSTs to your webhook.
-    Returns dict with sender, subject (cleaned), body (plain text).
+    Returns dict with sender, subject (cleaned), body (plain text, with
+    any quoted reply history stripped off).
     """
     sender = ((payload.get("from") or {}).get("email") or "").strip().lower()
     subject = payload.get("subject", "") or ""
     subject = SUBJECT_PREFIX_RE.sub("", subject).strip()
     body = payload.get("text", "") or ""
-    return {"sender": sender, "subject": subject, "body": body.strip()}
+    return {"sender": sender, "subject": subject, "body": _strip_quoted_reply(body.strip())}
 
 
 def _require_smtp_config():
@@ -93,7 +119,7 @@ def send_board_email(to_addrs, subject, image_path, summary_lines=None,
         prefix = f"<strong>{_escape(sender_name)}:</strong> " if sender_name else ""
         message_html = (
             "<div style='margin-top:14px; padding-left:12px; "
-            "border-left:3px solid #ccc;'>"
+            "border-left:3px solid #ccc; white-space:pre-wrap;'>"
             f"{prefix}{_escape(message_text)}</div>"
         )
 

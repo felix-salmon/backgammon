@@ -243,12 +243,10 @@ def _notify_both(row, game, message, result, base_url=None, sender_player=None):
 
     with tempfile.TemporaryDirectory() as tmp:
         png_path = os.path.join(tmp, "board.png")
-        image_message = f"{sender_name}: {message}" if (message and sender_name) else message
         save_board_png(
             game.board, png_path,
             to_move=game.to_move if not game.is_over() else None,
             dice=game.dice if (not game.is_over() and game.awaiting == "move") else None,
-            last_message=image_message,
             white_name=row["white_name"], black_name=row["black_name"],
             turn_no=len(game.history) + 1,
             cube_value=game.cube_value, cube_owner=game.cube_owner,

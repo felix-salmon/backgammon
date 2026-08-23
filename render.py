@@ -12,7 +12,7 @@ BAR_W = 60
 BOARD_W = 760
 OFF_W = 80
 W = MARGIN + BOARD_W + OFF_W + MARGIN
-H = 690
+H = 700
 POINT_W = (BOARD_W - BAR_W) / 12
 TRI_H = 230
 CHECKER_R = 18
@@ -29,6 +29,7 @@ BLACK_CHECKER = (35, 30, 28)
 OUTLINE = (10, 10, 10)
 TEXT = (235, 230, 220)
 TEXT_DIM = (170, 160, 145)
+POINT_LABEL = (255, 255, 255)
 DIE_FACE = (250, 248, 244)
 DIE_PIP = (25, 22, 20)
 
@@ -85,7 +86,7 @@ def _draw_die(d, cx, cy, size, value):
         d.ellipse([px - pip_r, py - pip_r, px + pip_r, py + pip_r], fill=DIE_PIP)
 
 
-def draw_board(board, to_move=None, dice=None, last_message=None,
+def draw_board(board, to_move=None, dice=None,
                white_name="White", black_name="Black", turn_no=None,
                cube_value=1, cube_owner=None, status_text=None):
     img = Image.new("RGB", (W, H), BG)
@@ -99,6 +100,7 @@ def draw_board(board, to_move=None, dice=None, last_message=None,
     d.rectangle([bar_x, board_top, bar_x + BAR_W, board_bottom], fill=BAR_COLOR)
 
     # triangles
+    f_label = _font(17, bold=True)
     for abs_pt in range(1, 25):
         top_row = abs_pt >= 13
         cx = _point_x(abs_pt, top_row)
@@ -113,10 +115,10 @@ def draw_board(board, to_move=None, dice=None, last_message=None,
             base_r = (cx + POINT_W / 2, board_bottom)
         d.polygon([base_l, base_r, apex], fill=color)
 
-        # point number label
-        f = _font(13)
-        label_y = board_top - 22 if top_row else board_bottom + 6
-        d.text((cx, label_y), str(abs_pt), fill=TEXT_DIM, font=f, anchor="mm")
+        # point number label -- same clearance from the board on both
+        # sides, bright white and large enough to read at a glance
+        label_y = board_top - 26 if top_row else board_bottom + 26
+        d.text((cx, label_y), str(abs_pt), fill=POINT_LABEL, font=f_label, anchor="mm")
 
     # checkers
     f_small = _font(14, bold=True)
@@ -190,7 +192,7 @@ def draw_board(board, to_move=None, dice=None, last_message=None,
         header += f"   -   turn {turn_no}"
     d.text((MARGIN, 20), header, fill=TEXT, font=f_head)
 
-    y = board_bottom + 26
+    y = board_bottom + 60
     row_h = 26
     text_x = MARGIN
 
@@ -211,10 +213,6 @@ def draw_board(board, to_move=None, dice=None, last_message=None,
         mover_name = white_name if to_move == "W" else black_name
         d.text((text_x, y + row_h / 2), f"On roll: {mover_name} ({to_move})",
                fill=TEXT, font=f_body, anchor="lm")
-
-    y += row_h + 8
-    if last_message:
-        d.text((MARGIN, y), last_message, fill=TEXT_DIM, font=f_body)
 
     return img
 
