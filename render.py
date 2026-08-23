@@ -3,6 +3,8 @@ Render a Board (+ some game context) to a PNG image, in the classic
 "top row is 13-24, bottom row is 12-1, bar in the middle" layout.
 """
 
+import re
+
 from PIL import Image, ImageDraw, ImageFont
 
 MARGIN = 30
@@ -10,10 +12,12 @@ BAR_W = 60
 BOARD_W = 760
 OFF_W = 80
 W = MARGIN + BOARD_W + OFF_W + MARGIN
-H = 640
+H = 690
 POINT_W = (BOARD_W - BAR_W) / 12
 TRI_H = 230
 CHECKER_R = 18
+DIE_SIZE = 46
+DIE_GAP = 12
 
 BG = (30, 26, 22)
 BOARD_BG = (222, 184, 135)
@@ -25,6 +29,19 @@ BLACK_CHECKER = (35, 30, 28)
 OUTLINE = (10, 10, 10)
 TEXT = (235, 230, 220)
 TEXT_DIM = (170, 160, 145)
+DIE_FACE = (250, 248, 244)
+DIE_PIP = (25, 22, 20)
+
+_PIP_LAYOUT = {
+    1: [(0, 0)],
+    2: [(-1, -1), (1, 1)],
+    3: [(-1, -1), (0, 0), (1, 1)],
+    4: [(-1, -1), (1, -1), (-1, 1), (1, 1)],
+    5: [(-1, -1), (1, -1), (0, 0), (-1, 1), (1, 1)],
+    6: [(-1, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (1, 1)],
+}
+
+_TRAILING_DICE_RE = re.compile(r"\s*\d+-\d+\.$")
 
 
 def _font(size, bold=False):
@@ -52,6 +69,20 @@ def _point_x(point_abs, top_row):
     offset = idx % 6
     x = MARGIN + half * (6 * POINT_W + BAR_W) + offset * POINT_W + POINT_W / 2
     return x
+
+
+def _draw_die(d, cx, cy, size, value):
+    """One die face with pips, centered at (cx, cy)."""
+    half = size / 2
+    d.rounded_rectangle(
+        [cx - half, cy - half, cx + half, cy + half],
+        radius=size * 0.16, fill=DIE_FACE, outline=OUTLINE, width=2,
+    )
+    pip_r = size * 0.09
+    offset = size * 0.26
+    for ox, oy in _PIP_LAYOUT.get(value, []):
+        px, py = cx + ox * offset, cy + oy * offset
+        d.ellipse([px - pip_r, py - pip_r, px + pip_r, py + pip_r], fill=DIE_PIP)
 
 
 def draw_board(board, to_move=None, dice=None, last_message=None,
@@ -159,15 +190,29 @@ def draw_board(board, to_move=None, dice=None, last_message=None,
         header += f"   -   turn {turn_no}"
     d.text((MARGIN, 20), header, fill=TEXT, font=f_head)
 
-    y = board_bottom + 30
+    y = board_bottom + 26
+    row_h = 26
+    text_x = MARGIN
+
+    if dice:
+        die_row_h = DIE_SIZE + 6
+        row_h = max(row_h, die_row_h)
+        die_cy = y + row_h / 2
+        _draw_die(d, MARGIN + DIE_SIZE / 2, die_cy, DIE_SIZE, dice[0])
+        _draw_die(d, MARGIN + DIE_SIZE * 1.5 + DIE_GAP, die_cy, DIE_SIZE, dice[1])
+        text_x = MARGIN + 2 * DIE_SIZE + DIE_GAP + 18
+
     if status_text:
-        d.text((MARGIN, y), status_text, fill=TEXT, font=f_body)
-        y += 26
+        display_status = _TRAILING_DICE_RE.sub(".", status_text) if dice else status_text
+        text_y = y + row_h / 2 if dice else y
+        anchor = "lm" if dice else "la"
+        d.text((text_x, text_y), display_status, fill=TEXT, font=f_body, anchor=anchor)
     elif to_move and dice:
         mover_name = white_name if to_move == "W" else black_name
-        d.text((MARGIN, y), f"On roll: {mover_name} ({to_move})   Dice: {dice[0]}-{dice[1]}",
-               fill=TEXT, font=f_body)
-        y += 26
+        d.text((text_x, y + row_h / 2), f"On roll: {mover_name} ({to_move})",
+               fill=TEXT, font=f_body, anchor="lm")
+
+    y += row_h + 8
     if last_message:
         d.text((MARGIN, y), last_message, fill=TEXT_DIM, font=f_body)
 
