@@ -174,7 +174,7 @@ def inbound():
         store.record_result(row["id"], winner_email, loser_email, summary["points"],
                              summary["multiplier"], summary["cube_value"], game.win_reason)
 
-    _bg(_notify_both, row, game, body, result, base_url)
+    _bg(_notify_both, row, game, body, result, base_url, player)
     return ("", 204)
 
 
@@ -189,66 +189,77 @@ def tally():
     return store.get_tally(a, b)
 
 
-def _notify_both(row, game, message, result, base_url=None):
-    note = None
+def _notify_both(row, game, message, result, base_url=None, sender_player=None):
+    summary_lines = []
+
     if isinstance(result, str):
-        note = result
+        summary_lines.append(result)
     elif isinstance(result, CubeEvent):
         white_name, black_name = row["white_name"], row["black_name"]
         who = white_name if result.player == WHITE else black_name
         if result.kind == "offered":
-            note = f"{who} offers to double to {result.value}."
+            summary_lines.append(f"{who} offers to double to {result.value}.")
         elif result.kind == "taken":
-            note = f"{who} takes the double -- cube is now at {result.value}."
+            summary_lines.append(f"{who} takes the double -- cube is now at {result.value}.")
         elif result.kind == "dropped":
-            note = f"{who} drops."
+            summary_lines.append(f"{who} drops.")
         elif result.kind == "resigned":
-            note = f"{who} resigns."
-    elif isinstance(result, TurnRecord) and result.hits:
-        note = f"Hit on: {', '.join(str(p) for p in result.hits)}"
+            summary_lines.append(f"{who} resigns.")
+    elif isinstance(result, TurnRecord):
+        mover_name = row["white_name"] if result.player == WHITE else row["black_name"]
+        summary_lines.append(f"{mover_name} played {result.move_text}.")
+        if result.hits:
+            summary_lines.append(f"Hit on: {', '.join(str(p) for p in result.hits)}.")
 
     for auto in game.last_auto_played:
         who = row["white_name"] if auto.player == WHITE else row["black_name"]
         if auto.move_text == "(no legal move)":
-            piece = f"{who} had no legal move."
+            summary_lines.append(f"{who} had no legal move.")
         else:
-            piece = f"{who} was forced: {auto.move_text}."
-        note = (note + " " if note else "") + piece
+            summary_lines.append(f"{who} was forced: {auto.move_text}.")
+
+    footer_lines = []
 
     if game.is_over():
         winner_name = row["white_name"] if game.winner == WHITE else row["black_name"]
         summary = game.result_summary()
         kind_suffix = {"normal": "", "gammon": " (gammon)", "backgammon": " (backgammon)"}[summary["kind"]]
-        win_note = f"{winner_name} wins {summary['points']} point(s){kind_suffix}!"
+        summary_lines.append(f"{winner_name} wins {summary['points']} point(s){kind_suffix}!")
 
         tally = store.get_tally(row["white_email"], row["black_email"])
         wn, bn = row["white_name"], row["black_name"]
         we, be = row["white_email"], row["black_email"]
-        tally_note = (
-            f" Head-to-head: {wn} {tally['wins'].get(we, 0)}-{tally['wins'].get(be, 0)} {bn} "
+        footer_lines.append(
+            f"Head-to-head: {wn} {tally['wins'].get(we, 0)}-{tally['wins'].get(be, 0)} {bn} "
             f"in games, {tally['points'].get(we, 0)}-{tally['points'].get(be, 0)} in points."
         )
-        note = (note + " -- " if note else "") + win_note + tally_note
 
     if base_url:
-        link_note = f"Current board: {base_url}/board/{row['id']}"
-        note = (note + "\n\n" if note else "") + link_note
+        footer_lines.append(f"Current board: {base_url}/board/{row['id']}")
+
+    sender_name = None
+    if sender_player is not None:
+        sender_name = row["white_name"] if sender_player == WHITE else row["black_name"]
 
     with tempfile.TemporaryDirectory() as tmp:
         png_path = os.path.join(tmp, "board.png")
+        image_message = f"{sender_name}: {message}" if (message and sender_name) else message
         save_board_png(
             game.board, png_path,
             to_move=game.to_move if not game.is_over() else None,
             dice=game.dice if (not game.is_over() and game.awaiting == "move") else None,
-            last_message=message,
+            last_message=image_message,
             white_name=row["white_name"], black_name=row["black_name"],
             turn_no=len(game.history) + 1,
             cube_value=game.cube_value, cube_owner=game.cube_owner,
             status_text=game.status_text(row["white_name"], row["black_name"]),
         )
         subj = f"[{row['label']}] {_subject_summary(game, result, row)}"
-        send_board_email([row["white_email"], row["black_email"]], subj, message, png_path,
-                          extra_note=note)
+        send_board_email(
+            [row["white_email"], row["black_email"]], subj, png_path,
+            summary_lines=summary_lines, sender_name=sender_name,
+            message_text=message, footer_lines=footer_lines,
+        )
 
 
 def _subject_summary(game, result, row):

@@ -29,16 +29,22 @@ def create_and_announce(store, label, white_email, white_name, black_email, blac
         )
         mover_name = white_name if game.to_move == "W" else black_name
         subj = f"[{label}] New game! {mover_name} to play {game.dice[0]}-{game.dice[1]}"
-        body = (
-            f"New game started. Reply with your move in the subject line, "
-            f"e.g. '[{label}] 24/18 13/11' or '[{label}] 24-18,13-11' or "
-            f"'[{label}] 2x24'. Point numbers are always exactly what's "
-            f"printed on the board picture, for either color. Send "
-            f"'[{label}] manual' any time to unlock the doubling cube, or "
-            f"'[{label}] greedy' to auto-play a pure race. Forced moves "
-            f"play themselves automatically."
+        summary_lines = [
+            f"New game started between {white_name} and {black_name}.",
+            f"{mover_name} rolled {game.dice[0]}-{game.dice[1]} and plays first.",
+            "",
+            f"Reply with your move in the subject line, e.g. '[{label}] 24/18 13/11', "
+            f"'[{label}] 24-18,13-11', or '[{label}] 2x24'.",
+            "Point numbers are always exactly what's printed on the board picture, "
+            "for either color.",
+            f"Send '[{label}] manual' any time to unlock the doubling cube, or "
+            f"'[{label}] greedy' to auto-play a pure race -- forced moves play "
+            f"themselves automatically.",
+        ]
+        footer_lines = [f"Current board: {base_url}/board/{gid}"] if base_url else []
+        send_board_email(
+            [white_email, black_email], subj, png_path,
+            summary_lines=summary_lines, footer_lines=footer_lines,
         )
-        extra_note = f"Current board: {base_url}/board/{gid}" if base_url else None
-        send_board_email([white_email, black_email], subj, body, png_path, extra_note=extra_note)
     return gid
 

@@ -60,24 +60,63 @@ def _send(msg):
         server.send_message(msg)
 
 
-def send_board_email(to_addrs, subject, message_text, image_path, extra_note=None):
-    """Send the rendered board PNG to one or more recipients, with the
-    player's message text underneath -- same shape as the old PBM emails.
+def send_board_email(to_addrs, subject, image_path, summary_lines=None,
+                      sender_name=None, message_text=None, footer_lines=None):
+    """Send the rendered board PNG to one or more recipients, laid out as
+    three visually distinct pieces:
+        summary_lines -- what just happened (one line each), e.g.
+                          "Felix played 24/18 13/11.", "Hit on: 18."
+        message_text  -- the sender's own note, if any, clearly attributed
+                          to sender_name and set apart from the summary
+        footer_lines   -- secondary info (tally, board link), dimmed and
+                          pushed to the bottom
     to_addrs: list of email addresses.
     """
+    summary_lines = summary_lines or []
+    footer_lines = footer_lines or []
+
+    text_parts = []
+    if summary_lines:
+        text_parts.append("\n".join(summary_lines))
+    if message_text:
+        prefix = f"{sender_name}: " if sender_name else ""
+        text_parts.append(f"{prefix}{message_text}")
+    if footer_lines:
+        text_parts.append("\n".join(footer_lines))
+    text_parts.append("[board image attached]")
+    text_body = "\n\n".join(text_parts)
+
+    summary_html = "".join(f"<div>{_escape(line)}</div>" for line in summary_lines)
+
+    message_html = ""
+    if message_text:
+        prefix = f"<strong>{_escape(sender_name)}:</strong> " if sender_name else ""
+        message_html = (
+            "<div style='margin-top:14px; padding-left:12px; "
+            "border-left:3px solid #ccc;'>"
+            f"{prefix}{_escape(message_text)}</div>"
+        )
+
+    footer_html = ""
+    if footer_lines:
+        footer_html = (
+            "<div style='margin-top:16px; color:#888; font-size:0.9em;'>"
+            + "".join(f"<div>{_escape(line)}</div>" for line in footer_lines)
+            + "</div>"
+        )
+
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = f"Backgammon <{SMTP_FROM}>"
     msg["To"] = ", ".join(to_addrs)
-
-    text_body = (message_text or "") + (f"\n\n{extra_note}" if extra_note else "")
-    msg.set_content(text_body + "\n\n[board image attached]")
+    msg.set_content(text_body)
 
     html = f"""\
     <div style="font-family: sans-serif;">
       <img src="cid:board" style="max-width: 100%; border: 1px solid #ccc;" />
-      {"<p>" + _escape(message_text) + "</p>" if message_text else ""}
-      {"<p style='color:#888'>" + _escape(extra_note) + "</p>" if extra_note else ""}
+      <div style="margin-top:12px;">{summary_html}</div>
+      {message_html}
+      {footer_html}
     </div>
     """
     msg.add_alternative(html, subtype="html")
