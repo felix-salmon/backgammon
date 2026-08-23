@@ -52,6 +52,7 @@ search too). For two friends playing casually this is normally a non-issue.
 """
 
 from dataclasses import dataclass, field
+from itertools import combinations, permutations
 from typing import Optional
 
 from board import (
@@ -237,6 +238,23 @@ class Game:
                 dest = _resolve_auto_dest(work, mover, src, remaining)
 
             die = _infer_die(work, mover, src, dest, remaining)
+
+            if die is None and isinstance(src, int) and isinstance(dest, int) and src > dest:
+                # a single die doesn't bridge src->dest directly -- see if
+                # combining two or more of the remaining dice does, e.g.
+                # '13/7' with a 2 and a 4 in hand, run through 13/11/7
+                combo = _resolve_combined_run(work, mover, src, dest, remaining)
+                if combo is not None:
+                    for step_src, step_dest, step_die in combo:
+                        if step_dest != "off":
+                            abs_dest = rel_to_abs(mover, step_dest)
+                            owner = work.owner_at_abs(abs_dest)
+                            if owner is not None and owner != mover and abs(work.count_at_abs(abs_dest)) == 1:
+                                hits.append(step_dest)
+                        work.apply_single(mover, step_src, step_dest, step_die)
+                        remaining.remove(step_die)
+                    continue
+
             if die is None:
                 raise IllegalMove(
                     f"'{format_hop(mover, src, dest)}' doesn't match any of your remaining dice {remaining}"
@@ -541,6 +559,46 @@ def _infer_die(board, player, src, dest, remaining):
     die = src - dest
     if die in remaining:
         return die
+    return None
+
+
+def _resolve_combined_run(board, player, src, dest, remaining_dice):
+    """When a single die doesn't connect src->dest, check whether running
+    through two or more of the remaining dice does -- e.g. '13/7' (6 pips)
+    with a 2 and a 4 in hand, via 13/11/7. Tries every subset of the
+    remaining dice (smallest first) and every ordering of it, simulating
+    each intermediate stop for legality. Returns a list of
+    (step_src, step_dest, step_die) if some ordering works end-to-end and
+    lands exactly on dest, else None."""
+    needed = src - dest
+    if needed <= 0:
+        return None
+
+    pool = list(remaining_dice)
+    tried_value_sets = set()
+    for size in range(2, len(pool) + 1):
+        for idx_combo in combinations(range(len(pool)), size):
+            values = tuple(sorted(pool[i] for i in idx_combo))
+            if sum(values) != needed or values in tried_value_sets:
+                continue
+            tried_value_sets.add(values)
+
+            for perm in set(permutations(values)):
+                steps = []
+                cur = src
+                probe = board.clone()
+                ok_all = True
+                for d in perm:
+                    nxt = cur - d
+                    ok, _ = is_legal_single(probe, player, cur, nxt, d)
+                    if not ok:
+                        ok_all = False
+                        break
+                    probe.apply_single(player, cur, nxt, d)
+                    steps.append((cur, nxt, d))
+                    cur = nxt
+                if ok_all and cur == dest:
+                    return steps
     return None
 
 

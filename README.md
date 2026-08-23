@@ -37,7 +37,14 @@ Move notation -- any of these, mixed freely, even within the same turn:
 - `2x24` -- shorthand: run 2 checkers off point 24, one per available die
   (needs the actual dice roll to expand, so it only works mid-game, not
   standalone)
-- `13/11/8` or `13-11-8` -- one checker using both dice in sequence
+- `13/11/8` or `13-11-8` -- one checker using both dice in sequence, with
+  the intermediate stop spelled out
+- `13/8` -- the same move, but written as just the endpoints. If no single
+  die covers the distance, but two or more of your remaining dice sum to
+  it, the engine finds a legal path through them automatically (checking
+  every ordering, so a blocked intermediate point on one path doesn't
+  stop it from trying the other). Works with doubles too, combining as
+  many dice as needed.
 - `bar/19` or `bar-19` or `b-19` -- entering from the bar (`b` is short for `bar`)
 - `6/off` or `6-off` -- bearing off
 - `22` (a bare point, no `/` or `-`) -- move whatever's on 22, letting the
