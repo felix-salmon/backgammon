@@ -38,13 +38,40 @@ Move notation -- any of these, mixed freely, even within the same turn:
   (needs the actual dice roll to expand, so it only works mid-game, not
   standalone)
 - `13/11/8` or `13-11-8` -- one checker using both dice in sequence
-- `bar/19` or `bar-19` -- entering from the bar
+- `bar/19` or `bar-19` or `b-19` -- entering from the bar (`b` is short for `bar`)
 - `6/off` or `6-off` -- bearing off
+- `22` (a bare point, no `/` or `-`) -- move whatever's on 22, letting the
+  engine work out the destination, as long as exactly one of your
+  remaining dice gives a legal move from there. Chain several with spaces
+  or commas -- `b,22` means "enter from the bar (using whichever die is
+  forced), then move whatever's on 22 with whatever die is left." Errors
+  out clearly if it's ambiguous (more than one legal destination) or
+  impossible (no legal destination at all).
 
 Point numbers always mean exactly what's printed on the board image --
 the same numbering for both colors. There's no "count from your own
 side" convention to remember; whatever number sits next to a checker in
 the picture is the number you type, whether you're White or Black.
+
+## Checking the board without waiting for an email
+
+Every board-update email now ends with a link to a live view of the
+current game:
+
+```
+https://yourhost/board/<game_id>
+```
+
+It's just a plain image URL -- click it (or bookmark it) any time to see
+whether your last message actually went through and whose turn it is,
+without digging through your inbox. It always reflects the current state,
+not a snapshot from when the email was sent.
+
+If someone's move fails validation (bad notation, illegal move, etc.),
+they get the specific error, and -- new -- their opponent quietly gets a
+one-line heads-up ("so-and-so's last message didn't go through, still
+their move") with the same link, so a silent failure doesn't leave the
+other player wondering why nothing's happening.
 
 ## The doubling cube
 

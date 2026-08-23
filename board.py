@@ -219,7 +219,7 @@ def is_legal_single(board, player, src, dest, die):
         return False, f"a {die} from point {src} doesn't reach off"
 
     # normal point-to-point
-    if not (0 <= dest <= 24):
+    if not isinstance(dest, int) or not (0 <= dest <= 24):
         return False, f"invalid destination point {dest}"
     if src - die != dest:
         return False, f"point {src} to point {dest} is not a legal move with a {die}"

@@ -20,7 +20,7 @@ import re
 import tempfile
 import threading
 
-from flask import Flask, request
+from flask import Flask, request, Response
 
 from game import IllegalMove, CommandError, TurnRecord, CubeEvent
 from render import save_board_png
@@ -74,11 +74,37 @@ def admin_start_game():
     if missing:
         return (f"missing fields: {', '.join(missing)}", 400)
 
+    base_url = request.host_url.rstrip("/")
     gid = create_and_announce(
         store, data["label"], data["white_email"], data["white_name"],
-        data["black_email"], data["black_name"],
+        data["black_email"], data["black_name"], base_url=base_url,
     )
     return ({"game_id": gid}, 200)
+
+
+@app.route("/board/<int:game_id>", methods=["GET"])
+def board_image(game_id):
+    """A live-rendered PNG of a game's current state -- click this any
+    time to check whether a move has gone through and whose turn it is,
+    without waiting on an email."""
+    row = store.load(game_id)
+    if row is None:
+        return ("no such game", 404)
+    game = row["game"]
+    with tempfile.TemporaryDirectory() as tmp:
+        png_path = os.path.join(tmp, "board.png")
+        save_board_png(
+            game.board, png_path,
+            to_move=game.to_move if not game.is_over() else None,
+            dice=game.dice if (not game.is_over() and game.awaiting == "move") else None,
+            white_name=row["white_name"], black_name=row["black_name"],
+            turn_no=len(game.history) + 1,
+            cube_value=game.cube_value, cube_owner=game.cube_owner,
+            status_text=game.status_text(row["white_name"], row["black_name"]),
+        )
+        with open(png_path, "rb") as f:
+            data = f.read()
+    return Response(data, mimetype="image/png")
 
 
 @app.route("/inbound", methods=["POST"])
@@ -92,6 +118,11 @@ def inbound():
     message_id = payload.get("message-id")
     if message_id and store.seen_message(message_id):
         return ("", 204)
+
+    # request is only valid inside this handler -- background threads
+    # can't touch it, so anything that needs the deployment's public URL
+    # has to be captured now and passed along explicitly.
+    base_url = request.host_url.rstrip("/")
 
     msg = parse_inbound_improvmx(payload)
     sender, subject, body = msg["sender"], msg["subject"], msg["body"]
@@ -108,10 +139,11 @@ def inbound():
                 f"I couldn't find a game of yours labeled '[{label}]'.")
         elif len(matches) > 1:
             labels = ", ".join(f"[{lbl}]" for _, lbl in matches)
+            links = "\n".join(f"[{lbl}]: {base_url}/board/{gid}" for gid, lbl in matches)
             _bg(send_text_email, sender, "Which game?",
                 f"You have more than one game going ({labels}). "
                 f"Put the game label at the start of your subject, e.g. "
-                f"'[{matches[0][1]}] 24/18 13/11'.")
+                f"'[{matches[0][1]}] 24/18 13/11'.\n\n{links}")
         else:
             _bg(send_text_email, sender, "No game found",
                 "I couldn't find a backgammon game with this address on it.")
@@ -119,11 +151,18 @@ def inbound():
 
     game = row["game"]
     player = WHITE if sender == row["white_email"] else BLACK
+    sender_name = row["white_name"] if player == WHITE else row["black_name"]
+    opponent_email = row["black_email"] if player == WHITE else row["white_email"]
+    board_link = f"{base_url}/board/{row['id']}"
 
     try:
         result = game.process_input(player, input_text, body)
     except (IllegalMove, CommandError) as e:
-        _bg(send_text_email, sender, "Not so fast", f"'{input_text}': {e}")
+        _bg(send_text_email, sender, "Not so fast",
+            f"'{input_text}': {e}\n\nCurrent board: {board_link}")
+        _bg(send_text_email, opponent_email, f"[{row['label']}] still waiting on {sender_name}",
+            f"{sender_name}'s last message didn't go through, so it's still their move. "
+            f"No action needed from you.\n\nCurrent board: {board_link}")
         return ("", 204)
 
     store.save(row["id"], game)
@@ -135,7 +174,7 @@ def inbound():
         store.record_result(row["id"], winner_email, loser_email, summary["points"],
                              summary["multiplier"], summary["cube_value"], game.win_reason)
 
-    _bg(_notify_both, row, game, body, result)
+    _bg(_notify_both, row, game, body, result, base_url)
     return ("", 204)
 
 
@@ -150,7 +189,7 @@ def tally():
     return store.get_tally(a, b)
 
 
-def _notify_both(row, game, message, result):
+def _notify_both(row, game, message, result, base_url=None):
     note = None
     if isinstance(result, str):
         note = result
@@ -190,6 +229,10 @@ def _notify_both(row, game, message, result):
             f"in games, {tally['points'].get(we, 0)}-{tally['points'].get(be, 0)} in points."
         )
         note = (note + " -- " if note else "") + win_note + tally_note
+
+    if base_url:
+        link_note = f"Current board: {base_url}/board/{row['id']}"
+        note = (note + "\n\n" if note else "") + link_note
 
     with tempfile.TemporaryDirectory() as tmp:
         png_path = os.path.join(tmp, "board.png")

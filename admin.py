@@ -12,7 +12,8 @@ from render import save_board_png
 from email_io import send_board_email
 
 
-def create_and_announce(store, label, white_email, white_name, black_email, black_name):
+def create_and_announce(store, label, white_email, white_name, black_email, black_name,
+                         base_url=None):
     gid = store.create_game(label, white_email, black_email, white_name, black_name)
     row = store.load(gid)
     game = row["game"]
@@ -28,16 +29,16 @@ def create_and_announce(store, label, white_email, white_name, black_email, blac
         )
         mover_name = white_name if game.to_move == "W" else black_name
         subj = f"[{label}] New game! {mover_name} to play {game.dice[0]}-{game.dice[1]}"
-        send_board_email(
-            [white_email, black_email], subj,
+        body = (
             f"New game started. Reply with your move in the subject line, "
             f"e.g. '[{label}] 24/18 13/11' or '[{label}] 24-18,13-11' or "
             f"'[{label}] 2x24'. Point numbers are always exactly what's "
             f"printed on the board picture, for either color. Send "
             f"'[{label}] manual' any time to unlock the doubling cube, or "
             f"'[{label}] greedy' to auto-play a pure race. Forced moves "
-            f"play themselves automatically.",
-            png_path,
+            f"play themselves automatically."
         )
+        extra_note = f"Current board: {base_url}/board/{gid}" if base_url else None
+        send_board_email([white_email, black_email], subj, body, png_path, extra_note=extra_note)
     return gid
 

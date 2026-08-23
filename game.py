@@ -233,6 +233,9 @@ class Game:
         hits = []
 
         for src, dest in hops:
+            if dest == "auto":
+                dest = _resolve_auto_dest(work, mover, src, remaining)
+
             die = _infer_die(work, mover, src, dest, remaining)
             if die is None:
                 raise IllegalMove(
@@ -476,6 +479,44 @@ class Game:
         return f"{name} to play {self.dice[0]}-{self.dice[1]}."
 
 
+def _abs_str(player, point):
+    """A single point rendered in the absolute (as-printed) terms a player
+    would recognize, for error messages."""
+    return "bar" if point == "bar" else str(rel_to_abs(player, point))
+
+
+def _resolve_auto_dest(board, player, src, remaining_dice):
+    """Given a bare 'move whatever's on this point' token (no destination
+    specified), work out the single legal destination using the dice
+    still available this turn. Raises IllegalMove if there's no legal
+    move from there, or more than one distinct destination possible."""
+    if board.bar[player] > 0 and src != "bar":
+        raise IllegalMove("you have a checker on the bar and must enter it first")
+
+    dest_to_dice = {}
+    for die in set(remaining_dice):
+        if src == "bar":
+            dest = 25 - die
+        else:
+            dest = src - die
+            dest = "off" if dest <= 0 else dest
+        ok, _ = is_legal_single(board, player, src, dest, die)
+        if ok:
+            dest_to_dice.setdefault(dest, []).append(die)
+
+    if not dest_to_dice:
+        raise IllegalMove(
+            f"no legal move from {_abs_str(player, src)} with your remaining dice {remaining_dice}"
+        )
+    if len(dest_to_dice) > 1:
+        options = ", ".join(_abs_str(player, d) for d in dest_to_dice)
+        raise IllegalMove(
+            f"more than one way to move from {_abs_str(player, src)} ({options}) "
+            f"-- please specify the destination"
+        )
+    return next(iter(dest_to_dice))
+
+
 def _infer_die(board, player, src, dest, remaining):
     """Work out which of the remaining dice values this hop is spending.
     Returns the die value, or None if no remaining die can produce this hop.
@@ -492,6 +533,9 @@ def _infer_die(board, player, src, dest, remaining):
         if highest is not None and src == highest:
             candidates = sorted(d for d in remaining if d >= src)
             return candidates[0] if candidates else None
+        return None
+
+    if not isinstance(dest, int):
         return None
 
     die = src - dest
