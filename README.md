@@ -238,8 +238,16 @@ running at once; the app strips it back off before parsing.
 
 - ImprovMX's webhook payload already gives clean, pre-parsed JSON (sender,
   subject, plain-text body) -- no MIME wrangling needed on your end.
-- If Simon's replies come through with quoted history under your original
-  message, that'll show up in the `text` field ImprovMX sends; if it gets
-  noisy you can trim it in `parse_inbound_improvmx()` in `email_io.py`.
+- The move itself always comes from the subject line, never the body --
+  so quoting weirdness in someone's reply can never affect which move
+  gets played, only whether their accompanying note comes through cleanly.
+- Replies usually carry quoted history from earlier in the thread.
+  `parse_inbound_improvmx()` in `email_io.py` splits the body at the
+  first thing that looks like a quote marker (a `>` line, "On ... wrote:",
+  etc.) and treats everything above it as the real new note. The quoted
+  part isn't discarded, though -- it's still included in the outgoing
+  email, just visually demoted and labeled, in case the split ever
+  guesses wrong (a reply client can occasionally put someone's actual
+  new text inside what looks like a quote).
 - ImprovMX's webhook always comes from a fixed IP (`15.237.103.194`) if you
   want to lock down your Flask endpoint to only accept requests from there.

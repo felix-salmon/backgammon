@@ -45,30 +45,38 @@ _QUOTE_MARKERS = [
 ]
 
 
-def _strip_quoted_reply(text):
-    """Keep only the part of an email body written above the quoted
-    reply chain, if any -- otherwise a reply email ends up including
-    every previous message in the thread as if it were new text."""
+def _split_quoted_reply(text):
+    """Split an email body into (new_text, quoted_text) at the earliest
+    quote marker found. Nothing gets discarded -- the quoted part is
+    returned too, for the caller to show underneath the new text rather
+    than silently dropping it. This matters because the split is a
+    heuristic: a reply client can occasionally put someone's actual new
+    text inside what looks like a quoted block (e.g. resending from a
+    quoted draft), and losing that outright is worse than just labeling
+    it as possibly-old and showing it anyway.
+    """
     if not text:
-        return text
+        return text, ""
     cut_at = len(text)
     for pattern in _QUOTE_MARKERS:
         m = pattern.search(text)
         if m and m.start() < cut_at:
             cut_at = m.start()
-    return text[:cut_at].strip()
+    return text[:cut_at].strip(), text[cut_at:].strip()
 
 
 def parse_inbound_improvmx(payload):
     """payload: the parsed JSON body ImprovMX POSTs to your webhook.
-    Returns dict with sender, subject (cleaned), body (plain text, with
-    any quoted reply history stripped off).
+    Returns dict with sender, subject (cleaned), body (the part of the
+    message above any quoted reply chain), and quoted (whatever came
+    after that split point, if anything -- not discarded, just separated).
     """
     sender = ((payload.get("from") or {}).get("email") or "").strip().lower()
     subject = payload.get("subject", "") or ""
     subject = SUBJECT_PREFIX_RE.sub("", subject).strip()
-    body = payload.get("text", "") or ""
-    return {"sender": sender, "subject": subject, "body": _strip_quoted_reply(body.strip())}
+    raw_body = payload.get("text", "") or ""
+    body, quoted = _split_quoted_reply(raw_body.strip())
+    return {"sender": sender, "subject": subject, "body": body, "quoted": quoted}
 
 
 def _require_smtp_config():
@@ -87,13 +95,18 @@ def _send(msg):
 
 
 def send_board_email(to_addrs, subject, image_path, summary_lines=None,
-                      sender_name=None, message_text=None, footer_lines=None):
+                      sender_name=None, message_text=None, quoted_text=None,
+                      footer_lines=None):
     """Send the rendered board PNG to one or more recipients, laid out as
-    three visually distinct pieces:
+    distinct pieces, in order:
         summary_lines -- what just happened (one line each), e.g.
                           "Felix played 24/18 13/11.", "Hit on: 18."
         message_text  -- the sender's own note, if any, clearly attributed
                           to sender_name and set apart from the summary
+        quoted_text   -- anything that looked like older quoted content
+                          from earlier in the thread (rather than discard
+                          it outright, in case the split guessed wrong),
+                          shown smaller and clearly labeled as such
         footer_lines   -- secondary info (tally, board link), dimmed and
                           pushed to the bottom
     to_addrs: list of email addresses.
@@ -107,6 +120,8 @@ def send_board_email(to_addrs, subject, image_path, summary_lines=None,
     if message_text:
         prefix = f"{sender_name}: " if sender_name else ""
         text_parts.append(f"{prefix}{message_text}")
+    if quoted_text:
+        text_parts.append(f"(quoted from earlier in the thread)\n{quoted_text}")
     if footer_lines:
         text_parts.append("\n".join(footer_lines))
     text_parts.append("[board image attached]")
@@ -121,6 +136,16 @@ def send_board_email(to_addrs, subject, image_path, summary_lines=None,
             "<div style='margin-top:14px; padding-left:12px; "
             "border-left:3px solid #ccc; white-space:pre-wrap;'>"
             f"{prefix}{_escape(message_text)}</div>"
+        )
+
+    quoted_html = ""
+    if quoted_text:
+        quoted_html = (
+            "<div style='margin-top:10px; padding-left:12px; "
+            "border-left:3px solid #444; white-space:pre-wrap; "
+            "color:#999; font-size:0.85em;'>"
+            "<em>(quoted from earlier in the thread)</em><br>"
+            f"{_escape(quoted_text)}</div>"
         )
 
     footer_html = ""
@@ -142,6 +167,7 @@ def send_board_email(to_addrs, subject, image_path, summary_lines=None,
       <img src="cid:board" style="max-width: 100%; border: 1px solid #ccc;" />
       <div style="margin-top:12px;">{summary_html}</div>
       {message_html}
+      {quoted_html}
       {footer_html}
     </div>
     """

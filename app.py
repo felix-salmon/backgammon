@@ -125,7 +125,7 @@ def inbound():
     base_url = request.host_url.rstrip("/")
 
     msg = parse_inbound_improvmx(payload)
-    sender, subject, body = msg["sender"], msg["subject"], msg["body"]
+    sender, subject, body, quoted = msg["sender"], msg["subject"], msg["body"], msg["quoted"]
 
     if not sender:
         return ("", 204)
@@ -158,8 +158,9 @@ def inbound():
     try:
         result = game.process_input(player, input_text, body)
     except (IllegalMove, CommandError) as e:
+        quoted_note = f"\n\n(quoted from earlier in the thread)\n{quoted}" if quoted else ""
         _bg(send_text_email, sender, "Not so fast",
-            f"'{input_text}': {e}\n\nCurrent board: {board_link}")
+            f"'{input_text}': {e}\n\nCurrent board: {board_link}{quoted_note}")
         _bg(send_text_email, opponent_email, f"[{row['label']}] still waiting on {sender_name}",
             f"{sender_name}'s last message didn't go through, so it's still their move. "
             f"No action needed from you.\n\nCurrent board: {board_link}")
@@ -174,7 +175,7 @@ def inbound():
         store.record_result(row["id"], winner_email, loser_email, summary["points"],
                              summary["multiplier"], summary["cube_value"], game.win_reason)
 
-    _bg(_notify_both, row, game, body, result, base_url, player)
+    _bg(_notify_both, row, game, body, result, base_url, player, quoted)
     return ("", 204)
 
 
@@ -189,7 +190,7 @@ def tally():
     return store.get_tally(a, b)
 
 
-def _notify_both(row, game, message, result, base_url=None, sender_player=None):
+def _notify_both(row, game, message, result, base_url=None, sender_player=None, quoted_text=None):
     summary_lines = []
 
     if isinstance(result, str):
@@ -256,7 +257,7 @@ def _notify_both(row, game, message, result, base_url=None, sender_player=None):
         send_board_email(
             [row["white_email"], row["black_email"]], subj, png_path,
             summary_lines=summary_lines, sender_name=sender_name,
-            message_text=message, footer_lines=footer_lines,
+            message_text=message, quoted_text=quoted_text, footer_lines=footer_lines,
         )
 
 
