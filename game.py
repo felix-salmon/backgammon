@@ -232,6 +232,7 @@ class Game:
         remaining = dice_multiset(self.dice)
         work = self.board.clone()
         hits = []
+        applied_display = []
 
         for src, dest in hops:
             if dest == "auto":
@@ -253,6 +254,7 @@ class Game:
                                 hits.append(step_dest)
                         work.apply_single(mover, step_src, step_dest, step_die)
                         remaining.remove(step_die)
+                        applied_display.append(format_hop(mover, step_src, step_dest))
                     continue
 
             if die is None:
@@ -271,9 +273,11 @@ class Game:
 
             work.apply_single(mover, src, dest, die)
             remaining.remove(die)
+            applied_display.append(format_hop(mover, src, dest))
 
         self.board = work
-        record = TurnRecord(player=mover, dice=self.dice, move_text=move_text,
+        display_text = " ".join(applied_display)
+        record = TurnRecord(player=mover, dice=self.dice, move_text=display_text,
                              message=message, hits=hits)
         self.history.append(record)
 
