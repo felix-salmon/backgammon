@@ -6,7 +6,8 @@ Usage:
     python3 cli.py [output_dir]
 
 Commands you can type at the move prompt, in addition to move notation:
-    manual    -- switch to manual dice mode (needed to be able to double)
+    manual    -- switch YOUR OWN dice to manual mode (needed to double);
+                 doesn't affect your opponent's turns
     auto      -- switch back to automatic dice rolling
     roll      -- (manual mode only) roll your dice
     double    -- (manual mode only, before rolling) offer to double

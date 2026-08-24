@@ -82,9 +82,10 @@ other player wondering why nothing's happening.
 
 ## The doubling cube
 
-Exactly like PBM: send **`manual`** at any point and the game stops
-auto-rolling. From then on, whoever's turn it is gets asked to reply with
-either:
+Exactly like PBM: send **`manual`** at any point and *your own* turns stop
+auto-rolling -- it's per-player, so it never affects your opponent's
+turns unless they separately send `manual` too. From then on, on your
+own turns, you get asked to reply with either:
 
 - **`roll`** -- roll as normal
 - **`double`** -- offer to double (only if you own the cube, or it's
@@ -93,8 +94,8 @@ either:
 If someone doubles, the other player replies **`take`**/**`accept`** (cube
 doubles, they now own it, and play continues) or **`drop`**/**`pass`**
 (they concede at the current cube value). Send **`auto`** any time to go
-back to automatic rolling. There's also a plain **`resign`** if someone
-just wants to concede outright.
+back to automatic rolling for your own turns. There's also a plain
+**`resign`** if someone just wants to concede outright.
 
 ## Forced moves and greedy racing
 

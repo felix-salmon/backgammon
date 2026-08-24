@@ -10,10 +10,12 @@ mirroring how the old PBM server worked:
 
 DOUBLING CUBE / MANUAL MODE
 ----------------------------
-By default (auto_dice=True) dice are rolled automatically the instant it
-becomes a player's turn, same as above. Sending the command "manual"
-switches the game to manual dice mode: instead of dice appearing
-automatically, the player on roll is asked to reply with either:
+By default each player is in automatic mode: dice are rolled the instant
+it becomes their turn, same as above. Sending "manual" switches only the
+sender into manual dice mode for their own turns -- it's per-player, not
+shared, so it never affects the opponent's turns unless they separately
+send "manual" too. On a manual player's own turn, instead of dice
+appearing automatically, they're asked to reply with either:
 
     roll      -- roll the dice as normal
     double    -- offer to double the cube (only legal before rolling,
@@ -25,9 +27,9 @@ If a double is offered, the *other* player is asked to reply with either:
                         the doubler rolls and continues their turn
     drop / pass     -- they concede the game at the current cube value
 
-Sending "auto" switches back to automatic rolling at any point (and, if
-someone was mid-decision about whether to roll or double, rolls for them
-immediately).
+Sending "auto" switches the sender back to automatic rolling at any
+point (and, if it's their own turn and they were mid-decision about
+whether to roll or double, rolls for them immediately).
 
 FORCED MOVES
 ------------
@@ -105,7 +107,7 @@ class Game:
 
     cube_value: int = 1
     cube_owner: Optional[str] = None   # None = centered, else only this player may double next
-    auto_dice: bool = True
+    auto_dice: dict = field(default_factory=lambda: {WHITE: True, BLACK: True})
     awaiting: str = AWAIT_MOVE
     pending_doubler: Optional[str] = None
     pending_cube_value: Optional[int] = None
@@ -136,7 +138,7 @@ class Game:
             "win_reason": self.win_reason,
             "cube_value": self.cube_value,
             "cube_owner": self.cube_owner,
-            "auto_dice": self.auto_dice,
+            "auto_dice": dict(self.auto_dice),
             "awaiting": self.awaiting,
             "pending_doubler": self.pending_doubler,
             "pending_cube_value": self.pending_cube_value,
@@ -149,6 +151,13 @@ class Game:
 
     @staticmethod
     def from_dict(d):
+        raw_auto_dice = d.get("auto_dice", True)
+        if isinstance(raw_auto_dice, dict):
+            auto_dice = {WHITE: raw_auto_dice.get(WHITE, True), BLACK: raw_auto_dice.get(BLACK, True)}
+        else:
+            # migrating a save from before auto_dice was per-player -- it
+            # was a single shared bool, so apply it to both sides once
+            auto_dice = {WHITE: bool(raw_auto_dice), BLACK: bool(raw_auto_dice)}
         g = Game(
             board=Board.from_dict(d["board"]),
             to_move=d["to_move"],
@@ -157,7 +166,7 @@ class Game:
             win_reason=d.get("win_reason"),
             cube_value=d.get("cube_value", 1),
             cube_owner=d.get("cube_owner"),
-            auto_dice=d.get("auto_dice", True),
+            auto_dice=auto_dice,
             awaiting=d.get("awaiting", AWAIT_MOVE),
             pending_doubler=d.get("pending_doubler"),
             pending_cube_value=d.get("pending_cube_value"),
@@ -296,23 +305,24 @@ class Game:
     def _cmd_manual(self, player):
         if self.is_over():
             raise CommandError("the game is already over")
-        if not self.auto_dice:
-            return "Already in manual dice mode."
-        self.auto_dice = False
-        return ("Switched to manual dice mode. On your turn, reply 'roll' to roll, "
-                "or 'double' to offer a double.")
+        if not self.auto_dice.get(player, True):
+            return "You're already in manual dice mode."
+        self.auto_dice[player] = False
+        return ("Switched you to manual dice mode -- on your turns, reply 'roll' to "
+                "roll, or 'double' to offer a double. This doesn't affect your "
+                "opponent; they can switch their own with 'manual' too if they want.")
 
     def _cmd_auto(self, player):
         if self.is_over():
             raise CommandError("the game is already over")
-        if self.auto_dice:
-            return "Already in automatic dice mode."
-        self.auto_dice = True
-        note = "Switched to automatic dice mode."
-        if self.awaiting == AWAIT_ROLL_OR_DOUBLE:
+        if self.auto_dice.get(player, True):
+            return "You're already in automatic dice mode."
+        self.auto_dice[player] = True
+        note = "Switched you to automatic dice mode."
+        if self.to_move == player and self.awaiting == AWAIT_ROLL_OR_DOUBLE:
             self.dice = roll_dice()
             self.awaiting = AWAIT_MOVE
-            note += f" Rolled {self.dice[0]}-{self.dice[1]} for the player on roll."
+            note += f" Rolled {self.dice[0]}-{self.dice[1]} for you."
         return note
 
     def _cmd_roll(self, player):
@@ -455,7 +465,7 @@ class Game:
 
     def _start_turn(self, player):
         self.to_move = player
-        if self.auto_dice:
+        if self.auto_dice.get(player, True):
             self.dice = roll_dice()
             self.awaiting = AWAIT_MOVE
         else:
