@@ -197,6 +197,10 @@ from the sender).
    SMTP_PASS=<the SMTP credential password from step 2 above>
    ADMIN_TOKEN=<any long random string you make up>
    ```
+   Optionally also `NOTIFY_WAITING_EMAILS` -- a comma-separated list of
+   who gets the quiet "still waiting on X" heads-up when someone's move
+   fails. Defaults to just `felix@felixsalmon.com`; set it explicitly if
+   you want to add people or change that.
 7. Deploy. Render gives you a URL like `https://backgammon-pbm.onrender.com`.
 
 ### 3. Point ImprovMX at it

@@ -31,6 +31,14 @@ from board import WHITE, BLACK, other
 
 DB_PATH = os.environ.get("BACKGAMMON_DB", "backgammon.db")
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN")
+# Who gets the quiet "still waiting on X" heads-up when someone's move
+# fails validation. Defaults to just Felix; override with a comma-
+# separated list via the env var if you want to add or change recipients.
+NOTIFY_WAITING_EMAILS = {
+    e.strip().lower() for e in
+    os.environ.get("NOTIFY_WAITING_EMAILS", "felix@felixsalmon.com").split(",")
+    if e.strip()
+}
 store = Store(DB_PATH)
 
 app = Flask(__name__)
@@ -161,9 +169,10 @@ def inbound():
         quoted_note = f"\n\n(quoted from earlier in the thread)\n{quoted}" if quoted else ""
         _bg(send_text_email, sender, "Not so fast",
             f"'{input_text}': {e}\n\nCurrent board: {board_link}{quoted_note}")
-        _bg(send_text_email, opponent_email, f"[{row['label']}] still waiting on {sender_name}",
-            f"{sender_name}'s last message didn't go through, so it's still their move. "
-            f"No action needed from you.\n\nCurrent board: {board_link}")
+        if opponent_email in NOTIFY_WAITING_EMAILS:
+            _bg(send_text_email, opponent_email, f"[{row['label']}] still waiting on {sender_name}",
+                f"{sender_name}'s last message didn't go through, so it's still their move. "
+                f"No action needed from you.\n\nCurrent board: {board_link}")
         return ("", 204)
 
     store.save(row["id"], game)
