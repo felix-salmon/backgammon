@@ -114,6 +114,18 @@ class Store:
             ).fetchall()
         return rows
 
+    def list_for_pair(self, email_a, email_b):
+        """All games (any status) between exactly these two email
+        addresses, regardless of which color each played. Used to pick a
+        fresh, non-colliding label when starting a rematch."""
+        with closing(sqlite3.connect(self.path)) as con:
+            rows = con.execute(
+                "SELECT id, label FROM games WHERE "
+                "(white_email=? AND black_email=?) OR (white_email=? AND black_email=?)",
+                (email_a, email_b, email_b, email_a),
+            ).fetchall()
+        return rows
+
     def seen_message(self, message_id):
         """Idempotency check for webhook deliveries. Returns True if this
         message_id has already been processed (in which case the caller

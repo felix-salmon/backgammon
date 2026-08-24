@@ -138,6 +138,16 @@ they need to lead their subject with the right label, e.g. `[g2] 24/18`
 -- if they forget, they'll get an email back listing their active labels
 rather than the move silently landing in the wrong game.
 
+## Rematches
+
+Once a game finishes, either player can reply `rematch` (or `new game`,
+`again`, `play again`) to start a fresh one against the same opponent --
+no terminal, no curl command. It auto-generates a label that won't
+collide with the finished game or any earlier rematches (`g1` -> `g1-2`
+-> `g1-3` ...) and sends the usual opening-board email. This only fires
+once the referenced game has actually ended; sending it to a game still
+in progress is just treated as an invalid move, same as any other typo.
+
 ## Known simplification
 
 The engine validates that each move you submit is legal, but doesn't

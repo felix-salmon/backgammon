@@ -26,7 +26,7 @@ from game import IllegalMove, CommandError, TurnRecord, CubeEvent
 from render import save_board_png
 from state import Store
 from email_io import parse_inbound_improvmx, send_board_email, send_text_email
-from admin import create_and_announce
+from admin import create_and_announce, start_rematch, REMATCH_TRIGGERS
 from board import WHITE, BLACK, other
 
 DB_PATH = os.environ.get("BACKGAMMON_DB", "backgammon.db")
@@ -163,12 +163,17 @@ def inbound():
     opponent_email = row["black_email"] if player == WHITE else row["white_email"]
     board_link = f"{base_url}/board/{row['id']}"
 
+    if game.is_over() and input_text.strip().lower().rstrip(".!") in REMATCH_TRIGGERS:
+        start_rematch(store, row, base_url=base_url)
+        return ("", 204)
+
     try:
         result = game.process_input(player, input_text, body)
     except (IllegalMove, CommandError) as e:
         quoted_note = f"\n\n(quoted from earlier in the thread)\n{quoted}" if quoted else ""
+        over_hint = ". Reply 'rematch' to start a new game." if game.is_over() else ""
         _bg(send_text_email, sender, "Not so fast",
-            f"'{input_text}': {e}\n\nCurrent board: {board_link}{quoted_note}")
+            f"'{input_text}': {e}{over_hint}\n\nCurrent board: {board_link}{quoted_note}")
         if opponent_email in NOTIFY_WAITING_EMAILS:
             _bg(send_text_email, opponent_email, f"[{row['label']}] still waiting on {sender_name}",
                 f"{sender_name}'s last message didn't go through, so it's still their move. "
