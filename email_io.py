@@ -86,12 +86,27 @@ def _require_smtp_config():
         )
 
 
-def _send(msg):
+def _send(msg, retries=4, retry_delays=(5, 15, 30)):
+    """Send via SMTP, retrying on transient connection failures before
+    giving up and letting the caller's error handling take over. The
+    delays back off (5s, 15s, 30s -- about a minute total) since this
+    runs in a background thread with nothing waiting on it, and a real
+    provider-side blip can last a couple of minutes, not just a second."""
     _require_smtp_config()
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASS)
-        server.send_message(msg)
+    import time
+    last_err = None
+    for attempt in range(retries):
+        try:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+                server.starttls()
+                server.login(SMTP_USER, SMTP_PASS)
+                server.send_message(msg)
+            return
+        except (smtplib.SMTPException, OSError) as e:
+            last_err = e
+            if attempt < retries - 1:
+                time.sleep(retry_delays[min(attempt, len(retry_delays) - 1)])
+    raise last_err
 
 
 def send_board_email(to_addrs, subject, image_path, summary_lines=None,
