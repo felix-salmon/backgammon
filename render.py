@@ -58,14 +58,14 @@ def _font(size, bold=False):
     return ImageFont.load_default()
 
 
-def _point_x(point_abs, top_row):
-    """x-center of the triangle base for absolute point 1..24."""
-    if top_row:
-        # top row goes 13..24 left to right, but 13-18 | bar | 19-24
-        idx = point_abs - 13  # 0..11
+def _point_x(abs_pt):
+    """x-center of the triangle base for absolute point 1..24. This is
+    the same regardless of rotation -- only the row (top/bottom) a point
+    renders in changes; its left-right position within that row doesn't."""
+    if abs_pt >= 13:
+        idx = abs_pt - 13  # 0..11, points 13..24 left to right
     else:
-        # bottom row goes 12..1 left to right, 12-7 | bar | 6-1
-        idx = 12 - point_abs  # for point 12 -> 0 ... point 1 -> 11
+        idx = 12 - abs_pt  # 0..11, points 12..1 left to right
     half = idx // 6
     offset = idx % 6
     x = MARGIN + half * (6 * POINT_W + BAR_W) + offset * POINT_W + POINT_W / 2
@@ -92,6 +92,12 @@ def draw_board(board, to_move=None, dice=None,
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
 
+    # Whoever's on roll gets their own home board rendered bottom-right --
+    # same numbering throughout (point 15 is always "15"), just flipped
+    # which physical row each point lands in, so it reads the same way
+    # for both colors instead of only being naturally oriented for White.
+    rotate = (to_move == "B")
+
     board_top = 90
     board_bottom = board_top + 2 * TRI_H
     d.rectangle([MARGIN, board_top, MARGIN + BOARD_W, board_bottom], fill=BOARD_BG, outline=OUTLINE, width=2)
@@ -102,8 +108,8 @@ def draw_board(board, to_move=None, dice=None,
     # triangles
     f_label = _font(17, bold=True)
     for abs_pt in range(1, 25):
-        top_row = abs_pt >= 13
-        cx = _point_x(abs_pt, top_row)
+        top_row = (abs_pt >= 13) != rotate
+        cx = _point_x(abs_pt)
         color = POINT_LIGHT if abs_pt % 2 == 0 else POINT_DARK
         if top_row:
             apex = (cx, board_top + TRI_H)
@@ -126,8 +132,8 @@ def draw_board(board, to_move=None, dice=None,
         cnt = board.points[abs_pt - 1]
         if cnt == 0:
             continue
-        top_row = abs_pt >= 13
-        cx = _point_x(abs_pt, top_row)
+        top_row = (abs_pt >= 13) != rotate
+        cx = _point_x(abs_pt)
         n = abs(cnt)
         color = WHITE_CHECKER if cnt > 0 else BLACK_CHECKER
         text_color = BLACK_CHECKER if cnt > 0 else WHITE_CHECKER
