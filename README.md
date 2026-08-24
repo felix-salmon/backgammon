@@ -74,6 +74,13 @@ whether your last message actually went through and whose turn it is,
 without digging through your inbox. It always reflects the current state,
 not a snapshot from when the email was sent.
 
+If a move email doesn't arrive at all (an email delivery hiccup, not
+something in your control), send **`resend`** and the game re-sends the
+most recent move -- board, summary, and the other player's message --
+to just you, not both players. Handy for exactly the case where you can
+already see the board's moved on via the `/board/<id>` link but never
+actually got the email explaining what happened.
+
 If someone's move fails validation (bad notation, illegal move, etc.),
 they get the specific error, and -- new -- their opponent quietly gets a
 one-line heads-up ("so-and-so's last message didn't go through, still
@@ -142,11 +149,13 @@ rather than the move silently landing in the wrong game.
 
 Once a game finishes, either player can reply `rematch` (or `new game`,
 `again`, `play again`) to start a fresh one against the same opponent --
-no terminal, no curl command. It auto-generates a label that won't
-collide with the finished game or any earlier rematches (`g1` -> `g1-2`
--> `g1-3` ...) and sends the usual opening-board email. This only fires
-once the referenced game has actually ended; sending it to a game still
-in progress is just treated as an invalid move, same as any other typo.
+no terminal, no curl command. It continues whatever numbering pattern
+the two of you already have going: rematching `g1` when `g2` also exists
+gives `g3` (not `g1-2`, which would read like a variant of `g1` rather
+than the next game in the sequence), and rematching a plain-named game
+like `skye` gives `skye2`. This only fires once the referenced game has
+actually ended; sending it to a game still in progress is just treated
+as an invalid move, same as any other typo.
 
 ## Known simplification
 

@@ -39,6 +39,7 @@ NOTIFY_WAITING_EMAILS = {
     os.environ.get("NOTIFY_WAITING_EMAILS", "felix@felixsalmon.com").split(",")
     if e.strip()
 }
+RESEND_TRIGGERS = {"resend", "resend last move", "resend move"}
 store = Store(DB_PATH)
 
 app = Flask(__name__)
@@ -167,6 +168,10 @@ def inbound():
         start_rematch(store, row, base_url=base_url)
         return ("", 204)
 
+    if input_text.strip().lower().rstrip(".!") in RESEND_TRIGGERS:
+        _bg(_resend_last_move, row, game, base_url, sender)
+        return ("", 204)
+
     try:
         result = game.process_input(player, input_text, body)
     except (IllegalMove, CommandError) as e:
@@ -202,6 +207,58 @@ def tally():
     if not a or not b:
         return ("usage: /tally?a=email1&b=email2", 400)
     return store.get_tally(a, b)
+
+
+def _resend_last_move(row, game, base_url, requester_email):
+    """Re-send the most recent turn's board + summary + message -- to
+    just the requester, not both players. Reconstructed from the game's
+    own history rather than depending on the original email having gone
+    out correctly, since that's exactly the scenario this is for."""
+    if not game.history:
+        send_text_email(requester_email, f"[{row['label']}] Nothing to resend",
+                         "No moves have been played in this game yet.")
+        return
+
+    last = game.history[-1]
+    mover_name = row["white_name"] if last.player == WHITE else row["black_name"]
+    summary_lines = [f"{mover_name} played {last.move_text}."]
+    if last.hits:
+        summary_lines.append(f"Hit on: {', '.join(str(p) for p in last.hits)}.")
+
+    footer_lines = [f"Current board: {base_url}/board/{row['id']}"] if base_url else []
+
+    if game.is_over():
+        winner_name = row["white_name"] if game.winner == WHITE else row["black_name"]
+        summary = game.result_summary()
+        kind_suffix = {"normal": "", "gammon": " (gammon)", "backgammon": " (backgammon)"}[summary["kind"]]
+        summary_lines.append(f"{winner_name} wins {summary['points']} point(s){kind_suffix}!")
+        tally = store.get_tally(row["white_email"], row["black_email"])
+        wn, bn = row["white_name"], row["black_name"]
+        we, be = row["white_email"], row["black_email"]
+        footer_lines.append(
+            f"Head-to-head: {wn} {tally['wins'].get(we, 0)}-{tally['wins'].get(be, 0)} {bn} "
+            f"in games, {tally['points'].get(we, 0)}-{tally['points'].get(be, 0)} in points."
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        png_path = os.path.join(tmp, "board.png")
+        save_board_png(
+            game.board, png_path,
+            to_move=game.to_move if not game.is_over() else None,
+            dice=game.dice if (not game.is_over() and game.awaiting == "move") else None,
+            white_name=row["white_name"], black_name=row["black_name"],
+            turn_no=len(game.history) + 1,
+            cube_value=game.cube_value, cube_owner=game.cube_owner,
+            status_text=game.status_text(row["white_name"], row["black_name"]),
+        )
+        subj = f"[{row['label']}] (resent) {mover_name} played {last.move_text}"
+        send_board_email(
+            [requester_email], subj, png_path,
+            summary_lines=summary_lines,
+            sender_name=mover_name if last.message else None,
+            message_text=last.message or None,
+            footer_lines=footer_lines,
+        )
 
 
 def _notify_both(row, game, message, result, base_url=None, sender_player=None, quoted_text=None):

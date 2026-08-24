@@ -54,19 +54,28 @@ def create_and_announce(store, label, white_email, white_name, black_email, blac
     return gid
 
 
+def _label_root_num(label):
+    """Split a label into (root, number) -- 'g1' -> ('g', 1), 'g12' ->
+    ('g', 12), 'skye' -> ('skye', 1) (no trailing number means it's
+    implicitly the first of its own family)."""
+    m = re.match(r"^(.*?)(\d+)$", label)
+    if m:
+        return m.group(1), int(m.group(2))
+    return label, 1
+
+
 def _next_label(store, white_email, black_email, base_label):
-    """A fresh label for a rematch between the same two players, avoiding
-    collisions with any label they've already used against each other --
-    g1 -> g1-2, and g1-2 -> g1-3 if that one's taken too, etc."""
-    existing = {lbl.lower() for _, lbl in store.list_for_pair(white_email, black_email)}
-    m = re.match(r"^(.*)-(\d+)$", base_label)
-    root = m.group(1) if m else base_label
-    n = 2
-    candidate = f"{root}-{n}"
-    while candidate.lower() in existing:
-        n += 1
-        candidate = f"{root}-{n}"
-    return candidate
+    """A fresh label that continues whatever numbering family base_label
+    already belongs to, rather than tacking on a suffix -- rematching
+    'g1' (when 'g2' also exists as a separate game) gives 'g3', not
+    'g1-2'; rematching a plain 'skye' gives 'skye2'."""
+    root, base_num = _label_root_num(base_label)
+    max_num = base_num
+    for _, lbl in store.list_for_pair(white_email, black_email):
+        lbl_root, lbl_num = _label_root_num(lbl)
+        if lbl_root.lower() == root.lower():
+            max_num = max(max_num, lbl_num)
+    return f"{root}{max_num + 1}"
 
 
 def start_rematch(store, finished_row, base_url=None):
