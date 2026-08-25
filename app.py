@@ -22,7 +22,10 @@ import threading
 
 from flask import Flask, request, Response
 
-from game import IllegalMove, CommandError, TurnRecord, CubeEvent
+from game import (
+    IllegalMove, CommandError, TurnRecord, CubeEvent,
+    AWAIT_DOUBLE_RESPONSE, AWAIT_ROLL_OR_DOUBLE,
+)
 from render import save_board_png
 from state import Store
 from email_io import parse_inbound_improvmx, send_board_email, send_text_email
@@ -251,7 +254,8 @@ def _resend_last_move(row, game, base_url, requester_email):
             cube_value=game.cube_value, cube_owner=game.cube_owner,
             status_text=game.status_text(row["white_name"], row["black_name"]),
         )
-        subj = f"[{row['label']}] (resent) {mover_name} played {last.move_text}"
+        next_part = _next_part(game, row)
+        subj = f"[{row['label']}] (resent) {next_part} after {mover_name} played {last.move_text}"
         send_board_email(
             [requester_email], subj, png_path,
             summary_lines=summary_lines,
@@ -332,12 +336,40 @@ def _notify_both(row, game, message, result, base_url=None, sender_player=None, 
         )
 
 
+def _player_name(row, player):
+    return row["white_name"] if player == WHITE else row["black_name"]
+
+
+def _next_part(game, row):
+    """Short phrase describing who needs to do what next, for the
+    subject line -- 'Skye to move', 'Felix to respond', 'Simon wins!'"""
+    if game.is_over():
+        return f"{_player_name(row, game.winner)} wins!"
+    if game.awaiting == AWAIT_DOUBLE_RESPONSE:
+        responder = other(game.pending_doubler)
+        return f"{_player_name(row, responder)} to respond"
+    if game.awaiting == AWAIT_ROLL_OR_DOUBLE:
+        return f"{_player_name(row, game.to_move)} to roll or double"
+    return f"{_player_name(row, game.to_move)} to move"
+
+
 def _subject_summary(game, result, row):
+    happened = None
     if isinstance(result, TurnRecord):
-        return f"{result.player} played {result.move_text}"
-    if isinstance(result, CubeEvent):
-        return f"{result.kind} ({result.value})"
-    return "update"
+        mover = _player_name(row, result.player)
+        happened = f"{mover} played {result.move_text}"
+    elif isinstance(result, CubeEvent):
+        who = _player_name(row, result.player)
+        verb = {
+            "offered": f"offered to double to {result.value}",
+            "taken": f"took the double to {result.value}",
+            "dropped": "dropped",
+            "resigned": "resigned",
+        }.get(result.kind, result.kind)
+        happened = f"{who} {verb}"
+
+    next_part = _next_part(game, row)
+    return f"{next_part} after {happened}" if happened else next_part
 
 
 def _extract_label(subject):
