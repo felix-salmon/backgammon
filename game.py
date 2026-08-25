@@ -46,11 +46,18 @@ meant for pure bear-off races once contact is impossible -- it applies no
 judgment about safety, so don't reach for it while there's still a blot
 either of you could hit.
 
-Known simplification: we validate that each submitted move is legal, but
-we do NOT enforce the official "you must use both dice if it's possible
-to do so" maximal-play rule beyond what's needed for forced-move detection
-above (that would require searching every submitted move against the full
-search too). For two friends playing casually this is normally a non-issue.
+MAXIMAL PLAY
+------------
+Real backgammon requires playing as many of your dice as any legal
+sequence can manage -- you can't stop early just because you found *a*
+legal move if a fuller one exists. This is enforced: after your move is
+applied, if some other legal sequence from the same roll would have used
+more dice, the move is rejected with a note on how many you could have
+used. Combined runs (using two or more dice on one checker to reach a
+point no single die connects to) are found automatically, including
+right after entering from the bar -- e.g. 'b/2' with a roll of all 1s
+enters on 1 and keeps going to 2 with a second 1, without needing the
+intermediate stop spelled out.
 """
 
 from dataclasses import dataclass, field
@@ -239,6 +246,7 @@ class Game:
             raise IllegalMove(str(e))
 
         remaining = dice_multiset(self.dice)
+        dice_available = len(remaining)
         work = self.board.clone()
         hits = []
         applied_display = []
@@ -248,23 +256,30 @@ class Game:
                 dest = _resolve_auto_dest(work, mover, src, remaining)
 
             die = _infer_die(work, mover, src, dest, remaining)
+            combo = None
 
-            if die is None and isinstance(src, int) and isinstance(dest, int) and src > dest:
+            if die is None and isinstance(dest, int):
                 # a single die doesn't bridge src->dest directly -- see if
                 # combining two or more of the remaining dice does, e.g.
-                # '13/7' with a 2 and a 4 in hand, run through 13/11/7
-                combo = _resolve_combined_run(work, mover, src, dest, remaining)
-                if combo is not None:
-                    for step_src, step_dest, step_die in combo:
-                        if step_dest != "off":
-                            abs_dest = rel_to_abs(mover, step_dest)
-                            owner = work.owner_at_abs(abs_dest)
-                            if owner is not None and owner != mover and abs(work.count_at_abs(abs_dest)) == 1:
-                                hits.append(step_dest)
-                        work.apply_single(mover, step_src, step_dest, step_die)
-                        remaining.remove(step_die)
-                        applied_display.append(format_hop(mover, step_src, step_dest))
-                    continue
+                # '13/7' with a 2 and a 4 in hand, run through 13/11/7,
+                # or entering from the bar and continuing on with more
+                # dice, e.g. 'b/2' with all 1s: enter on 1, then run to 2
+                if isinstance(src, int) and src > dest:
+                    combo = _resolve_combined_run(work, mover, src, dest, remaining)
+                elif src == "bar":
+                    combo = _resolve_bar_combined_run(work, mover, dest, remaining)
+
+            if combo is not None:
+                for step_src, step_dest, step_die in combo:
+                    if step_dest != "off":
+                        abs_dest = rel_to_abs(mover, step_dest)
+                        owner = work.owner_at_abs(abs_dest)
+                        if owner is not None and owner != mover and abs(work.count_at_abs(abs_dest)) == 1:
+                            hits.append(step_dest)
+                    work.apply_single(mover, step_src, step_dest, step_die)
+                    remaining.remove(step_die)
+                    applied_display.append(format_hop(mover, step_src, step_dest))
+                continue
 
             if die is None:
                 raise IllegalMove(
@@ -283,6 +298,14 @@ class Game:
             work.apply_single(mover, src, dest, die)
             remaining.remove(die)
             applied_display.append(format_hop(mover, src, dest))
+
+        dice_used = dice_available - len(remaining)
+        max_usable = _max_dice_usable(self.board, mover, self.dice)
+        if dice_used < max_usable:
+            raise IllegalMove(
+                f"that only uses {dice_used} of your dice, but there's a legal way to use "
+                f"{max_usable} -- you have to play as much of your roll as you can"
+            )
 
         self.board = work
         display_text = " ".join(applied_display)
@@ -577,20 +600,23 @@ def _infer_die(board, player, src, dest, remaining):
 
 
 def _resolve_combined_run(board, player, src, dest, remaining_dice):
-    """When a single die doesn't connect src->dest, check whether running
-    through two or more of the remaining dice does -- e.g. '13/7' (6 pips)
-    with a 2 and a 4 in hand, via 13/11/7. Tries every subset of the
-    remaining dice (smallest first) and every ordering of it, simulating
-    each intermediate stop for legality. Returns a list of
-    (step_src, step_dest, step_die) if some ordering works end-to-end and
-    lands exactly on dest, else None."""
+    """Check whether running through one or more of the remaining dice
+    connects src->dest -- e.g. '13/7' (6 pips) with a 2 and a 4 in hand,
+    via 13/11/7. Tries every subset of the remaining dice (smallest
+    first) and every ordering of it, simulating each intermediate stop
+    for legality. Returns a list of (step_src, step_dest, step_die) if
+    some ordering works end-to-end and lands exactly on dest, else None.
+    (A size-1 subset is included so this can also serve as the single-die
+    continuation check after a bar entry -- see _resolve_bar_combined_run.
+    Callers that already ruled out a direct single-die match themselves
+    just get None back for size 1, same as before.)"""
     needed = src - dest
     if needed <= 0:
         return None
 
     pool = list(remaining_dice)
     tried_value_sets = set()
-    for size in range(2, len(pool) + 1):
+    for size in range(1, len(pool) + 1):
         for idx_combo in combinations(range(len(pool)), size):
             values = tuple(sorted(pool[i] for i in idx_combo))
             if sum(values) != needed or values in tried_value_sets:
@@ -614,6 +640,41 @@ def _resolve_combined_run(board, player, src, dest, remaining_dice):
                 if ok_all and cur == dest:
                     return steps
     return None
+
+
+def _resolve_bar_combined_run(board, player, dest, remaining_dice):
+    """When entering from the bar doesn't land exactly on dest with a
+    single die, check whether entering with one die and then continuing
+    with one or more of the others gets there -- e.g. 'b/2' when every
+    die shows 1: enter with a 1 (landing on absolute 1 for Black), then
+    continue with another 1 to reach 2. Returns a list of
+    (step_src, step_dest, step_die) covering the whole run (entry
+    included), or None if no entry die leads anywhere that connects."""
+    pool = list(remaining_dice)
+    for i, d1 in enumerate(pool):
+        entry_rel = 25 - d1
+        ok, _ = is_legal_single(board, player, "bar", entry_rel, d1)
+        if not ok:
+            continue
+        if entry_rel == dest:
+            continue  # a plain single-die entry -- already handled elsewhere
+        rest = pool[:i] + pool[i + 1:]
+        work = board.clone()
+        work.apply_single(player, "bar", entry_rel, d1)
+        continuation = _resolve_combined_run(work, player, entry_rel, dest, rest)
+        if continuation is not None:
+            return [("bar", entry_rel, d1)] + continuation
+    return None
+
+
+def _max_dice_usable(board, player, dice):
+    """The largest number of dice any legal way of playing this roll
+    uses, from the current board -- used to enforce that a submitted
+    move doesn't leave dice unplayed when a fuller play was available."""
+    maximal = _enumerate_full_turns(board, player, dice)
+    if not maximal:
+        return 0
+    return len(maximal[0][0])
 
 
 def _opening_roll():

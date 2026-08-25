@@ -157,14 +157,16 @@ like `skye` gives `skye2`. This only fires once the referenced game has
 actually ended; sending it to a game still in progress is just treated
 as an invalid move, same as any other typo.
 
-## Known simplification
+## Maximal play
 
-The engine validates that each move you submit is legal, but doesn't
-enforce the official "you must use both dice if it's possible to" rule --
-that needs a search over all move sequences, which felt like overkill for
-two friends playing honestly. Everything else -- hits, the bar, blocked
-points, bearing off with overage, doubles giving four moves, and the full
-doubling cube -- is real.
+Same rule as real backgammon: you have to play as many of your dice as
+any legal sequence can manage, not just stop once you've found *a*
+legal move. If a submitted move leaves dice unplayed that could have
+been used, it's rejected with a note on how many you could have played.
+Combining two or more dice to reach a point no single die connects to
+is found automatically -- including right after entering from the bar,
+e.g. `b/2` with a roll of all 1s enters on 1 and continues to 2 with a
+second 1, no need to spell out the intermediate stop.
 
 ## Wiring up actual email
 
