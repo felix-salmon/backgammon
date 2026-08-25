@@ -33,6 +33,57 @@ POINT_LABEL = (255, 255, 255)
 DIE_FACE = (250, 248, 244)
 DIE_PIP = (25, 22, 20)
 
+# Named color palettes. Each key matches one of the module-level color
+# constants above; draw_board(theme=...) picks one of these (falling back
+# to the module-level defaults, i.e. "classic", for any key it omits).
+THEMES = {
+    "classic": {
+        "bg": (30, 26, 22), "board_bg": (222, 184, 135),
+        "point_dark": (110, 60, 40), "point_light": (200, 160, 110),
+        "bar": (70, 45, 30), "white_checker": (245, 240, 230),
+        "black_checker": (35, 30, 28), "outline": (10, 10, 10),
+        "text": (235, 230, 220), "text_dim": (170, 160, 145),
+        "point_label": (255, 255, 255),
+        "die_face": (250, 248, 244), "die_pip": (25, 22, 20),
+    },
+    "ocean": {
+        "bg": (15, 30, 45), "board_bg": (235, 225, 205),
+        "point_dark": (25, 95, 115), "point_light": (235, 190, 90),
+        "bar": (20, 45, 60), "white_checker": (250, 248, 244),
+        "black_checker": (22, 32, 42), "outline": (10, 10, 15),
+        "text": (235, 240, 245), "text_dim": (140, 165, 182),
+        "point_label": (255, 255, 255),
+        "die_face": (250, 248, 244), "die_pip": (20, 20, 25),
+    },
+    "emerald": {
+        "bg": (10, 35, 25), "board_bg": (230, 215, 180),
+        "point_dark": (18, 92, 58), "point_light": (198, 168, 100),
+        "bar": (15, 50, 35), "white_checker": (250, 248, 240),
+        "black_checker": (28, 24, 20), "outline": (10, 10, 10),
+        "text": (235, 235, 220), "text_dim": (150, 178, 160),
+        "point_label": (255, 255, 255),
+        "die_face": (250, 248, 240), "die_pip": (20, 18, 15),
+    },
+    "palm_springs": {
+        "bg": (48, 140, 158), "board_bg": (250, 220, 190),
+        "point_dark": (198, 68, 58), "point_light": (245, 172, 88),
+        "bar": (48, 140, 158), "white_checker": (255, 250, 245),
+        "black_checker": (40, 25, 35), "outline": (20, 10, 15),
+        "text": (252, 238, 230), "text_dim": (215, 172, 182),
+        "point_label": (255, 255, 255),
+        "die_face": (255, 250, 245), "die_pip": (30, 20, 25),
+    },
+    "slate": {
+        "bg": (34, 39, 47), "board_bg": (245, 245, 240),
+        "point_dark": (66, 88, 108), "point_light": (232, 138, 58),
+        "bar": (44, 49, 57), "white_checker": (255, 255, 255),
+        "black_checker": (35, 38, 45), "outline": (15, 15, 18),
+        "text": (240, 240, 238), "text_dim": (155, 162, 172),
+        "point_label": (255, 255, 255),
+        "die_face": (255, 255, 255), "die_pip": (25, 25, 28),
+    },
+}
+
 _PIP_LAYOUT = {
     1: [(0, 0)],
     2: [(-1, -1), (1, 1)],
@@ -72,24 +123,39 @@ def _point_x(abs_pt):
     return x
 
 
-def _draw_die(d, cx, cy, size, value):
+def _draw_die(d, cx, cy, size, value, face_color, pip_color, outline_color):
     """One die face with pips, centered at (cx, cy)."""
     half = size / 2
     d.rounded_rectangle(
         [cx - half, cy - half, cx + half, cy + half],
-        radius=size * 0.16, fill=DIE_FACE, outline=OUTLINE, width=2,
+        radius=size * 0.16, fill=face_color, outline=outline_color, width=2,
     )
     pip_r = size * 0.09
     offset = size * 0.26
     for ox, oy in _PIP_LAYOUT.get(value, []):
         px, py = cx + ox * offset, cy + oy * offset
-        d.ellipse([px - pip_r, py - pip_r, px + pip_r, py + pip_r], fill=DIE_PIP)
+        d.ellipse([px - pip_r, py - pip_r, px + pip_r, py + pip_r], fill=pip_color)
 
 
 def draw_board(board, to_move=None, dice=None,
                white_name="White", black_name="Black", turn_no=None,
-               cube_value=1, cube_owner=None, status_text=None):
-    img = Image.new("RGB", (W, H), BG)
+               cube_value=1, cube_owner=None, status_text=None, theme="palm_springs"):
+    palette = THEMES.get(theme, THEMES["classic"])
+    bg = palette["bg"]
+    board_bg = palette["board_bg"]
+    point_dark = palette["point_dark"]
+    point_light = palette["point_light"]
+    bar_color = palette["bar"]
+    white_checker = palette["white_checker"]
+    black_checker = palette["black_checker"]
+    outline = palette["outline"]
+    text = palette["text"]
+    text_dim = palette["text_dim"]
+    point_label = palette["point_label"]
+    die_face = palette["die_face"]
+    die_pip = palette["die_pip"]
+
+    img = Image.new("RGB", (W, H), bg)
     d = ImageDraw.Draw(img)
 
     # Whoever's on roll gets their own home board rendered bottom-right --
@@ -100,17 +166,17 @@ def draw_board(board, to_move=None, dice=None,
 
     board_top = 90
     board_bottom = board_top + 2 * TRI_H
-    d.rectangle([MARGIN, board_top, MARGIN + BOARD_W, board_bottom], fill=BOARD_BG, outline=OUTLINE, width=2)
+    d.rectangle([MARGIN, board_top, MARGIN + BOARD_W, board_bottom], fill=board_bg, outline=outline, width=2)
 
     bar_x = MARGIN + 6 * POINT_W
-    d.rectangle([bar_x, board_top, bar_x + BAR_W, board_bottom], fill=BAR_COLOR)
+    d.rectangle([bar_x, board_top, bar_x + BAR_W, board_bottom], fill=bar_color)
 
     # triangles
     f_label = _font(17, bold=True)
     for abs_pt in range(1, 25):
         top_row = (abs_pt >= 13) != rotate
         cx = _point_x(abs_pt)
-        color = POINT_LIGHT if abs_pt % 2 == 0 else POINT_DARK
+        color = point_light if abs_pt % 2 == 0 else point_dark
         if top_row:
             apex = (cx, board_top + TRI_H)
             base_l = (cx - POINT_W / 2, board_top)
@@ -124,7 +190,7 @@ def draw_board(board, to_move=None, dice=None,
         # point number label -- same clearance from the board on both
         # sides, bright white and large enough to read at a glance
         label_y = board_top - 26 if top_row else board_bottom + 26
-        d.text((cx, label_y), str(abs_pt), fill=POINT_LABEL, font=f_label, anchor="mm")
+        d.text((cx, label_y), str(abs_pt), fill=point_label, font=f_label, anchor="mm")
 
     # checkers
     f_small = _font(14, bold=True)
@@ -135,8 +201,8 @@ def draw_board(board, to_move=None, dice=None,
         top_row = (abs_pt >= 13) != rotate
         cx = _point_x(abs_pt)
         n = abs(cnt)
-        color = WHITE_CHECKER if cnt > 0 else BLACK_CHECKER
-        text_color = BLACK_CHECKER if cnt > 0 else WHITE_CHECKER
+        color = white_checker if cnt > 0 else black_checker
+        text_color = black_checker if cnt > 0 else white_checker
         max_stack = 5
         shown = min(n, max_stack)
         for i in range(shown):
@@ -145,7 +211,7 @@ def draw_board(board, to_move=None, dice=None,
             else:
                 cy = board_bottom - CHECKER_R - i * (CHECKER_R * 1.9)
             d.ellipse([cx - CHECKER_R, cy - CHECKER_R, cx + CHECKER_R, cy + CHECKER_R],
-                      fill=color, outline=OUTLINE, width=2)
+                      fill=color, outline=outline, width=2)
             if i == shown - 1 and n > max_stack:
                 d.text((cx, cy), f"+{n - max_stack + 1}", fill=text_color, font=f_small, anchor="mm")
 
@@ -155,23 +221,23 @@ def draw_board(board, to_move=None, dice=None,
         cy = board_top + TRI_H - 40
         d.ellipse([bar_x + BAR_W / 2 - CHECKER_R, cy - CHECKER_R,
                    bar_x + BAR_W / 2 + CHECKER_R, cy + CHECKER_R],
-                  fill=WHITE_CHECKER, outline=OUTLINE, width=2)
-        d.text((bar_x + BAR_W / 2, cy), str(board.bar["W"]), fill=BLACK_CHECKER, font=f_bar, anchor="mm")
+                  fill=white_checker, outline=outline, width=2)
+        d.text((bar_x + BAR_W / 2, cy), str(board.bar["W"]), fill=black_checker, font=f_bar, anchor="mm")
     if board.bar["B"] > 0:
         cy = board_bottom - TRI_H + 40
         d.ellipse([bar_x + BAR_W / 2 - CHECKER_R, cy - CHECKER_R,
                    bar_x + BAR_W / 2 + CHECKER_R, cy + CHECKER_R],
-                  fill=BLACK_CHECKER, outline=OUTLINE, width=2)
-        d.text((bar_x + BAR_W / 2, cy), str(board.bar["B"]), fill=WHITE_CHECKER, font=f_bar, anchor="mm")
+                  fill=black_checker, outline=outline, width=2)
+        d.text((bar_x + BAR_W / 2, cy), str(board.bar["B"]), fill=white_checker, font=f_bar, anchor="mm")
 
     # off (borne-off) trays, right side
     f_off = _font(16, bold=True)
     off_x = MARGIN + BOARD_W + 10
     off_box_w = OFF_W - 20
-    d.rectangle([off_x, board_top, off_x + off_box_w, board_top + TRI_H - 10], outline=TEXT_DIM, width=2)
-    d.rectangle([off_x, board_bottom - TRI_H + 10, off_x + off_box_w, board_bottom], outline=TEXT_DIM, width=2)
-    d.text((off_x + off_box_w / 2, board_top + TRI_H / 2 - 5), f"W\n{board.off['W']}", fill=TEXT, font=f_off, anchor="mm")
-    d.text((off_x + off_box_w / 2, board_bottom - TRI_H / 2 + 5), f"B\n{board.off['B']}", fill=TEXT, font=f_off, anchor="mm")
+    d.rectangle([off_x, board_top, off_x + off_box_w, board_top + TRI_H - 10], outline=text_dim, width=2)
+    d.rectangle([off_x, board_bottom - TRI_H + 10, off_x + off_box_w, board_bottom], outline=text_dim, width=2)
+    d.text((off_x + off_box_w / 2, board_top + TRI_H / 2 - 5), f"W\n{board.off['W']}", fill=text, font=f_off, anchor="mm")
+    d.text((off_x + off_box_w / 2, board_bottom - TRI_H / 2 + 5), f"B\n{board.off['B']}", fill=text, font=f_off, anchor="mm")
 
     # doubling cube
     f_cube = _font(20, bold=True)
@@ -186,9 +252,9 @@ def draw_board(board, to_move=None, dice=None,
     d.rounded_rectangle(
         [cube_cx - cube_size / 2, cube_cy - cube_size / 2,
          cube_cx + cube_size / 2, cube_cy + cube_size / 2],
-        radius=6, fill=(235, 230, 220), outline=OUTLINE, width=2,
+        radius=6, fill=die_face, outline=outline, width=2,
     )
-    d.text((cube_cx, cube_cy), str(cube_value), fill=BLACK_CHECKER, font=f_cube, anchor="mm")
+    d.text((cube_cx, cube_cy), str(cube_value), fill=black_checker, font=f_cube, anchor="mm")
 
     # header / footer text
     f_head = _font(22, bold=True)
@@ -196,7 +262,7 @@ def draw_board(board, to_move=None, dice=None,
     header = f"{white_name} (White)  vs  {black_name} (Black)"
     if turn_no is not None:
         header += f"   -   turn {turn_no}"
-    d.text((MARGIN, 20), header, fill=TEXT, font=f_head)
+    d.text((MARGIN, 20), header, fill=text, font=f_head)
 
     y = board_bottom + 60
     row_h = 26
@@ -206,19 +272,19 @@ def draw_board(board, to_move=None, dice=None,
         die_row_h = DIE_SIZE + 6
         row_h = max(row_h, die_row_h)
         die_cy = y + row_h / 2
-        _draw_die(d, MARGIN + DIE_SIZE / 2, die_cy, DIE_SIZE, dice[0])
-        _draw_die(d, MARGIN + DIE_SIZE * 1.5 + DIE_GAP, die_cy, DIE_SIZE, dice[1])
+        _draw_die(d, MARGIN + DIE_SIZE / 2, die_cy, DIE_SIZE, dice[0], die_face, die_pip, outline)
+        _draw_die(d, MARGIN + DIE_SIZE * 1.5 + DIE_GAP, die_cy, DIE_SIZE, dice[1], die_face, die_pip, outline)
         text_x = MARGIN + 2 * DIE_SIZE + DIE_GAP + 18
 
     if status_text:
         display_status = _TRAILING_DICE_RE.sub(".", status_text) if dice else status_text
         text_y = y + row_h / 2 if dice else y
         anchor = "lm" if dice else "la"
-        d.text((text_x, text_y), display_status, fill=TEXT, font=f_body, anchor=anchor)
+        d.text((text_x, text_y), display_status, fill=text, font=f_body, anchor=anchor)
     elif to_move and dice:
         mover_name = white_name if to_move == "W" else black_name
         d.text((text_x, y + row_h / 2), f"On roll: {mover_name} ({to_move})",
-               fill=TEXT, font=f_body, anchor="lm")
+               fill=text, font=f_body, anchor="lm")
 
     return img
 
