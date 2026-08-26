@@ -116,7 +116,6 @@ def board_image(game_id):
             turn_no=len(game.history) + 1,
             cube_value=game.cube_value, cube_owner=game.cube_owner,
             status_text=game.status_text(row["white_name"], row["black_name"]),
-            history_lines=_history_lines(row, game, limit=6),
         )
         with open(png_path, "rb") as f:
             img_b64 = base64.b64encode(f.read()).decode("ascii")
@@ -271,7 +270,6 @@ def _resend_last_move(row, game, base_url, requester_email):
             turn_no=len(game.history) + 1,
             cube_value=game.cube_value, cube_owner=game.cube_owner,
             status_text=game.status_text(row["white_name"], row["black_name"]),
-            history_lines=_history_lines(row, game, limit=6),
         )
         next_part = _next_part(game, row)
         subj = f"[{row['label']}] (resent) {next_part} after {mover_name} played {last.move_text}"
@@ -280,6 +278,7 @@ def _resend_last_move(row, game, base_url, requester_email):
             summary_lines=summary_lines,
             sender_name=mover_name if last.message else None,
             message_text=last.message or None,
+            history_lines=_history_lines(row, game, limit=6),
             footer_lines=footer_lines,
         )
 
@@ -346,13 +345,14 @@ def _notify_both(row, game, message, result, base_url=None, sender_player=None, 
             turn_no=len(game.history) + 1,
             cube_value=game.cube_value, cube_owner=game.cube_owner,
             status_text=game.status_text(row["white_name"], row["black_name"]),
-            history_lines=_history_lines(row, game, limit=6),
         )
         subj = f"[{row['label']}] {_subject_summary(game, result, row)}"
         send_board_email(
             [row["white_email"], row["black_email"]], subj, png_path,
             summary_lines=summary_lines, sender_name=sender_name,
-            message_text=message, quoted_text=quoted_text, footer_lines=footer_lines,
+            message_text=message, quoted_text=quoted_text,
+            history_lines=_history_lines(row, game, limit=6),
+            footer_lines=footer_lines,
         )
 
 

@@ -111,7 +111,7 @@ def _send(msg, retries=4, retry_delays=(5, 15, 30)):
 
 def send_board_email(to_addrs, subject, image_path, summary_lines=None,
                       sender_name=None, message_text=None, quoted_text=None,
-                      footer_lines=None):
+                      history_lines=None, footer_lines=None):
     """Send the rendered board PNG to one or more recipients, laid out as
     distinct pieces, in order:
         summary_lines -- what just happened (one line each), e.g.
@@ -122,12 +122,15 @@ def send_board_email(to_addrs, subject, image_path, summary_lines=None,
                           from earlier in the thread (rather than discard
                           it outright, in case the split guessed wrong),
                           shown smaller and clearly labeled as such
+        history_lines -- the last several moves, shown at full legibility
+                          (not dimmed) as plain reference text
         footer_lines   -- secondary info (tally, board link), dimmed and
                           pushed to the bottom
     to_addrs: list of email addresses.
     """
     summary_lines = summary_lines or []
     footer_lines = footer_lines or []
+    history_lines = history_lines or []
 
     text_parts = []
     if summary_lines:
@@ -137,6 +140,8 @@ def send_board_email(to_addrs, subject, image_path, summary_lines=None,
         text_parts.append(f"{prefix}{message_text}")
     if quoted_text:
         text_parts.append(f"(quoted from earlier in the thread)\n{quoted_text}")
+    if history_lines:
+        text_parts.append("Recent moves:\n" + "\n".join(history_lines))
     if footer_lines:
         text_parts.append("\n".join(footer_lines))
     text_parts.append("[board image attached]")
@@ -163,6 +168,14 @@ def send_board_email(to_addrs, subject, image_path, summary_lines=None,
             f"{_escape(quoted_text)}</div>"
         )
 
+    history_html = ""
+    if history_lines:
+        history_html = (
+            "<div style='margin-top:14px;'><strong>Recent moves:</strong>"
+            + "".join(f"<div>{_escape(line)}</div>" for line in history_lines)
+            + "</div>"
+        )
+
     footer_html = ""
     if footer_lines:
         footer_html = (
@@ -183,6 +196,7 @@ def send_board_email(to_addrs, subject, image_path, summary_lines=None,
       <div style="margin-top:12px;">{summary_html}</div>
       {message_html}
       {quoted_html}
+      {history_html}
       {footer_html}
     </div>
     """

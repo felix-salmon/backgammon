@@ -60,22 +60,28 @@ the same numbering for both colors. There's no "count from your own
 side" convention to remember; whatever number sits next to a checker in
 the picture is the number you type, whether you're White or Black.
 
+## Recent moves and full history
+
+Every board-update email now includes a plain-text "Recent moves" section
+in the body -- the last several turns, each showing who rolled what and
+what they played, or "no legal move" if they danced. It's regular
+legible body text, not baked into the image, so it's never a legibility
+fight regardless of board theme. Every line always shows the dice that
+were rolled, even on a turn where nothing could be played -- so a dance
+at least tells you what you rolled, rather than just silently passing.
+
 ## Checking the board without waiting for an email
 
-Every board-update email now ends with a link to a live view of the
+Every board-update email also ends with a link to a live view of the
 current game:
 
 ```
 https://yourhost/board/<game_id>
 ```
 
-That page shows the board itself (with its last 6 moves listed
-underneath, same as the emailed image) plus the **complete** move
-history below it, most recent first -- so it's the place to go if you
-want the full record, not just what fits in an email. Every history
-line always shows the dice that were rolled, even on a turn where
-nothing could be played -- so a dance at least tells you what you
-rolled, rather than just silently passing.
+That page shows the board itself plus the **complete** move history
+below it, most recent first -- so it's the place to go if you want the
+full record, not just the last several turns an email shows.
 
 If a move email doesn't arrive at all (an email delivery hiccup, not
 something in your control), send **`resend`** and the game re-sends the
