@@ -12,7 +12,7 @@ BAR_W = 60
 BOARD_W = 760
 OFF_W = 80
 W = MARGIN + BOARD_W + OFF_W + MARGIN
-H = 700
+H = 780
 POINT_W = (BOARD_W - BAR_W) / 12
 TRI_H = 230
 CHECKER_R = 18
@@ -139,7 +139,8 @@ def _draw_die(d, cx, cy, size, value, face_color, pip_color, outline_color):
 
 def draw_board(board, to_move=None, dice=None,
                white_name="White", black_name="Black", turn_no=None,
-               cube_value=1, cube_owner=None, status_text=None, theme="palm_springs"):
+               cube_value=1, cube_owner=None, status_text=None, theme="palm_springs",
+               history_lines=None):
     palette = THEMES.get(theme, THEMES["classic"])
     bg = palette["bg"]
     board_bg = palette["board_bg"]
@@ -285,6 +286,16 @@ def draw_board(board, to_move=None, dice=None,
         mover_name = white_name if to_move == "W" else black_name
         d.text((text_x, y + row_h / 2), f"On roll: {mover_name} ({to_move})",
                fill=text, font=f_body, anchor="lm")
+
+    if history_lines:
+        y += row_h + 18
+        f_hist_head = _font(14, bold=True)
+        f_hist = _font(14)
+        d.text((MARGIN, y), "Recent moves:", fill=text_dim, font=f_hist_head)
+        y += 22
+        for line in history_lines:
+            d.text((MARGIN, y), line, fill=text_dim, font=f_hist)
+            y += 20
 
     return img
 

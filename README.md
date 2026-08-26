@@ -69,10 +69,13 @@ current game:
 https://yourhost/board/<game_id>
 ```
 
-It's just a plain image URL -- click it (or bookmark it) any time to see
-whether your last message actually went through and whose turn it is,
-without digging through your inbox. It always reflects the current state,
-not a snapshot from when the email was sent.
+That page shows the board itself (with its last 6 moves listed
+underneath, same as the emailed image) plus the **complete** move
+history below it, most recent first -- so it's the place to go if you
+want the full record, not just what fits in an email. Every history
+line always shows the dice that were rolled, even on a turn where
+nothing could be played -- so a dance at least tells you what you
+rolled, rather than just silently passing.
 
 If a move email doesn't arrive at all (an email delivery hiccup, not
 something in your control), send **`resend`** and the game re-sends the

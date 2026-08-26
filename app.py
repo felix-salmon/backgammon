@@ -15,6 +15,8 @@ Run locally for testing with:  python3 app.py
 (then use ngrok or similar to expose it to ImprovMX while testing)
 """
 
+import base64
+import html
 import os
 import re
 import tempfile
@@ -96,9 +98,10 @@ def admin_start_game():
 
 @app.route("/board/<int:game_id>", methods=["GET"])
 def board_image(game_id):
-    """A live-rendered PNG of a game's current state -- click this any
-    time to check whether a move has gone through and whose turn it is,
-    without waiting on an email."""
+    """A live view of a game's current state -- click this any time to
+    check whether a move has gone through and whose turn it is, without
+    waiting on an email. Shows the board (with its last few moves baked
+    in, same as the emails) plus the complete move history below it."""
     row = store.load(game_id)
     if row is None:
         return ("no such game", 404)
@@ -113,10 +116,25 @@ def board_image(game_id):
             turn_no=len(game.history) + 1,
             cube_value=game.cube_value, cube_owner=game.cube_owner,
             status_text=game.status_text(row["white_name"], row["black_name"]),
+            history_lines=_history_lines(row, game, limit=6),
         )
         with open(png_path, "rb") as f:
-            data = f.read()
-    return Response(data, mimetype="image/png")
+            img_b64 = base64.b64encode(f.read()).decode("ascii")
+
+    full_history = _history_lines(row, game)
+    history_html = "".join(f"<div>{html.escape(line)}</div>" for line in reversed(full_history))
+    page = f"""\
+    <!DOCTYPE html>
+    <html>
+    <head><title>{html.escape(row['label'])} -- {row['white_name']} vs {row['black_name']}</title></head>
+    <body style="background:#221f1c; color:#eee; font-family:sans-serif; padding:20px; max-width:820px; margin:0 auto;">
+      <img src="data:image/png;base64,{img_b64}" style="max-width:100%; border:1px solid #444;" />
+      <h3 style="margin-top:24px;">Full move history</h3>
+      <div style="line-height:1.6;">{history_html or '<em>No moves yet.</em>'}</div>
+    </body>
+    </html>
+    """
+    return Response(page, mimetype="text/html")
 
 
 @app.route("/inbound", methods=["POST"])
@@ -253,6 +271,7 @@ def _resend_last_move(row, game, base_url, requester_email):
             turn_no=len(game.history) + 1,
             cube_value=game.cube_value, cube_owner=game.cube_owner,
             status_text=game.status_text(row["white_name"], row["black_name"]),
+            history_lines=_history_lines(row, game, limit=6),
         )
         next_part = _next_part(game, row)
         subj = f"[{row['label']}] (resent) {next_part} after {mover_name} played {last.move_text}"
@@ -327,6 +346,7 @@ def _notify_both(row, game, message, result, base_url=None, sender_player=None, 
             turn_no=len(game.history) + 1,
             cube_value=game.cube_value, cube_owner=game.cube_owner,
             status_text=game.status_text(row["white_name"], row["black_name"]),
+            history_lines=_history_lines(row, game, limit=6),
         )
         subj = f"[{row['label']}] {_subject_summary(game, result, row)}"
         send_board_email(
@@ -338,6 +358,24 @@ def _notify_both(row, game, message, result, base_url=None, sender_player=None, 
 
 def _player_name(row, player):
     return row["white_name"] if player == WHITE else row["black_name"]
+
+
+def _history_lines(row, game, limit=None):
+    """Formatted move-history lines, most recent last, each numbered by
+    its actual position in the game (so a 'last N' slice still shows the
+    real turn numbers, not 1..N). Always shows the dice that were rolled,
+    even for a turn with no legal move -- so a dance is at least visible
+    as 'rolled a 4-4, no legal move' rather than just vanishing."""
+    numbered = list(enumerate(game.history, start=1))
+    if limit is not None:
+        numbered = numbered[-limit:]
+    lines = []
+    for turn_no, rec in numbered:
+        name = _player_name(row, rec.player)
+        dice_str = f"{rec.dice[0]}-{rec.dice[1]}" if rec.dice else "?"
+        body = "no legal move" if rec.move_text == "(no legal move)" else rec.move_text
+        lines.append(f"{turn_no}. {name} rolled {dice_str}: {body}")
+    return lines
 
 
 def _next_part(game, row):
