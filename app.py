@@ -110,7 +110,7 @@ def board_image(game_id):
         png_path = os.path.join(tmp, "board.png")
         save_board_png(
             game.board, png_path,
-            to_move=game.to_move if not game.is_over() else None,
+            to_move=_render_perspective(game),
             dice=game.dice if (not game.is_over() and game.awaiting == "move") else None,
             white_name=row["white_name"], black_name=row["black_name"],
             turn_no=len(game.history) + 1,
@@ -264,7 +264,7 @@ def _resend_last_move(row, game, base_url, requester_email):
         png_path = os.path.join(tmp, "board.png")
         save_board_png(
             game.board, png_path,
-            to_move=game.to_move if not game.is_over() else None,
+            to_move=_render_perspective(game),
             dice=game.dice if (not game.is_over() and game.awaiting == "move") else None,
             white_name=row["white_name"], black_name=row["black_name"],
             turn_no=len(game.history) + 1,
@@ -339,7 +339,7 @@ def _notify_both(row, game, message, result, base_url=None, sender_player=None, 
         png_path = os.path.join(tmp, "board.png")
         save_board_png(
             game.board, png_path,
-            to_move=game.to_move if not game.is_over() else None,
+            to_move=_render_perspective(game),
             dice=game.dice if (not game.is_over() and game.awaiting == "move") else None,
             white_name=row["white_name"], black_name=row["black_name"],
             turn_no=len(game.history) + 1,
@@ -358,6 +358,19 @@ def _notify_both(row, game, message, result, base_url=None, sender_player=None, 
 
 def _player_name(row, player):
     return row["white_name"] if player == WHITE else row["black_name"]
+
+
+def _render_perspective(game):
+    """Who the board should be rotated for. Normally whoever's turn it
+    is -- but while a double is pending, that's the responder, not the
+    doubler: game.to_move stays on the doubler internally (they keep the
+    roll if it's taken), but they're not the one who needs to look at
+    the board and make a decision right now."""
+    if game.is_over():
+        return None
+    if game.awaiting == AWAIT_DOUBLE_RESPONSE:
+        return other(game.pending_doubler)
+    return game.to_move
 
 
 def _history_lines(row, game, limit=None):
