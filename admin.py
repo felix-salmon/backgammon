@@ -85,6 +85,17 @@ def _next_label(store, white_email, black_email, base_label):
     return f"{root}{max_num + 1}"
 
 
+def _first_available_label(store, email_a, email_b, desired_label):
+    """A label for a brand-new pairing: use it as-is if these two haven't
+    used it before (the common case -- e.g. 'skye' for a first-ever game
+    against someone new), otherwise fall back to the same incrementing
+    scheme rematches use."""
+    existing = {lbl.lower() for _, lbl in store.list_for_pair(email_a, email_b)}
+    if desired_label.lower() not in existing:
+        return desired_label
+    return _next_label(store, email_a, email_b, desired_label)
+
+
 def start_rematch(store, finished_row, base_url=None):
     """Start a fresh game between the same two players as finished_row
     (expected to be a game that's already over), auto-generating a label

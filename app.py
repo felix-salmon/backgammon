@@ -31,7 +31,7 @@ from game import (
 from render import save_board_png
 from state import Store
 from email_io import parse_inbound_improvmx, send_board_email, send_text_email
-from admin import create_and_announce, start_rematch, REMATCH_TRIGGERS
+from admin import create_and_announce, start_rematch, REMATCH_TRIGGERS, _first_available_label
 from board import WHITE, BLACK, other
 
 DB_PATH = os.environ.get("BACKGAMMON_DB", "backgammon.db")
@@ -45,6 +45,13 @@ NOTIFY_WAITING_EMAILS = {
     if e.strip()
 }
 RESEND_TRIGGERS = {"resend", "resend last move", "resend move"}
+# "new game: alice@example.com, Alice" (or "newgame alice@example.com Alice",
+# colon/comma optional) -- starts a game with someone you've never played,
+# no curl command needed. Doesn't need a [label] prefix since there's no
+# existing game to disambiguate.
+_NEW_GAME_RE = re.compile(
+    r"^new\s*game\s*:?\s*([^\s,]+@[^\s,]+)[,\s]+(.+)$", re.IGNORECASE
+)
 store = Store(DB_PATH)
 
 app = Flask(__name__)
@@ -157,6 +164,17 @@ def inbound():
     sender, subject, body, quoted = msg["sender"], msg["subject"], msg["body"], msg["quoted"]
 
     if not sender:
+        return ("", 204)
+
+    new_game_match = _NEW_GAME_RE.match(subject.strip())
+    if new_game_match:
+        opponent_email = new_game_match.group(1).strip().lower()
+        opponent_name = new_game_match.group(2).strip().rstrip(".!")
+        sender_name = _guess_sender_name(payload, sender)
+        desired_label = (opponent_name.split()[0] if opponent_name else "game").lower()
+        label = _first_available_label(store, sender, opponent_email, desired_label)
+        create_and_announce(store, label, sender, sender_name, opponent_email, opponent_name,
+                             base_url=base_url)
         return ("", 204)
 
     label, input_text = _extract_label(subject)
@@ -358,6 +376,17 @@ def _notify_both(row, game, message, result, base_url=None, sender_player=None, 
 
 def _player_name(row, player):
     return row["white_name"] if player == WHITE else row["black_name"]
+
+
+def _guess_sender_name(payload, sender_email):
+    """A reasonable display name for someone we may never have seen
+    before -- their email client's display name if ImprovMX passed one
+    along, otherwise a capitalized guess from the address itself."""
+    name = ((payload.get("from") or {}).get("name") or "").strip()
+    if name:
+        return name.split()[0]
+    local = sender_email.split("@")[0]
+    return local.split(".")[0].split("_")[0].capitalize()
 
 
 def _render_perspective(game):

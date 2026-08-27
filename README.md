@@ -143,6 +143,22 @@ win-announcement email, and you can check it any time at:
 https://yourhost/tally?a=felix@felixsalmon.com&b=simon@example.com
 ```
 
+## Starting a game with someone new
+
+No curl command needed for this either -- send an email to your game
+address with a subject like:
+
+```
+new game: alice@example.com, Alice
+```
+
+(`newgame`, no colon, or a space instead of the comma all work too.) That
+creates a game between you and Alice, labels it from her name (`alice`,
+following the same convention as `skye` -- bumping to `alice2` if you've
+somehow already used that label with her before), and sends the opening
+board to both of you. Your own name is guessed from your email's display
+name if there is one, otherwise from your address.
+
 ## Multiple games, multiple people
 
 Nothing stops you from running several games at once -- against Simon,
