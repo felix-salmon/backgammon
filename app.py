@@ -255,7 +255,7 @@ def _resend_last_move(row, game, base_url, requester_email):
         tally = store.get_tally(row["white_email"], row["black_email"])
         wn, bn = row["white_name"], row["black_name"]
         we, be = row["white_email"], row["black_email"]
-        footer_lines.append(
+        summary_lines.append(
             f"Head-to-head: {wn} {tally['wins'].get(we, 0)}-{tally['wins'].get(be, 0)} {bn} "
             f"in games, {tally['points'].get(we, 0)}-{tally['points'].get(be, 0)} in points."
         )
@@ -323,7 +323,7 @@ def _notify_both(row, game, message, result, base_url=None, sender_player=None, 
         tally = store.get_tally(row["white_email"], row["black_email"])
         wn, bn = row["white_name"], row["black_name"]
         we, be = row["white_email"], row["black_email"]
-        footer_lines.append(
+        summary_lines.append(
             f"Head-to-head: {wn} {tally['wins'].get(we, 0)}-{tally['wins'].get(be, 0)} {bn} "
             f"in games, {tally['points'].get(we, 0)}-{tally['points'].get(be, 0)} in points."
         )

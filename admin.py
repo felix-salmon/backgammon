@@ -47,6 +47,13 @@ def create_and_announce(store, label, white_email, white_name, black_email, blac
             f"to start a fresh one against the same opponent.",
         ]
         footer_lines = [f"Current board: {base_url}/board/{gid}"] if base_url else []
+        tally = store.get_tally(white_email, black_email)
+        if tally["games_played"] > 0:
+            footer_lines.append(
+                f"Head-to-head: {white_name} {tally['wins'].get(white_email, 0)}-"
+                f"{tally['wins'].get(black_email, 0)} {black_name} in games, "
+                f"{tally['points'].get(white_email, 0)}-{tally['points'].get(black_email, 0)} in points."
+            )
         send_board_email(
             [white_email, black_email], subj, png_path,
             summary_lines=summary_lines, footer_lines=footer_lines,
