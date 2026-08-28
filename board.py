@@ -109,6 +109,15 @@ class Board:
     def borne_off_all(self, player):
         return self.off[player] == 15
 
+    def pip_count(self, player):
+        """Total pips this player's checkers need to travel to bear off
+        completely -- the standard backgammon race metric. A checker on
+        the bar counts as needing the full 25 pips."""
+        total = self.bar[player] * 25
+        for abs_pt, cnt in self.checkers_of(player).items():
+            total += abs_to_rel(player, abs_pt) * cnt
+        return total
+
     def entry_blocked(self, player, die):
         """Is the entry point for this die blocked by 2+ opposing checkers?"""
         rel_entry = 25 - die

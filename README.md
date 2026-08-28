@@ -159,6 +159,13 @@ somehow already used that label with her before), and sends the opening
 board to both of you. Your own name is guessed from your email's display
 name if there is one, otherwise from your address.
 
+## Pip count
+
+Each side's off-tray now shows a small pip count underneath the
+borne-off tally -- the standard "how many total pips left to bear
+everything off" race number. Useful for eyeballing who's actually ahead
+without doing the arithmetic yourself.
+
 ## Multiple games, multiple people
 
 Nothing stops you from running several games at once -- against Simon,

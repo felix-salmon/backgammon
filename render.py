@@ -137,6 +137,17 @@ def _draw_die(d, cx, cy, size, value, face_color, pip_color, outline_color):
         d.ellipse([px - pip_r, py - pip_r, px + pip_r, py + pip_r], fill=pip_color)
 
 
+def _draw_off_stack(d, box_left, box_right, start_y, count, color, outline_color,
+                     slot_h=11, bar_h=8, max_shown=15):
+    """A stack of thin horizontal bars, one per borne-off checker -- like
+    checkers lying flat in a real bear-off tray, viewed from above."""
+    cx_left = box_left + 6
+    cx_right = box_right - 6
+    for i in range(min(count, max_shown)):
+        y_top = start_y + i * slot_h
+        d.rectangle([cx_left, y_top, cx_right, y_top + bar_h], fill=color, outline=outline_color, width=1)
+
+
 def draw_board(board, to_move=None, dice=None,
                white_name="White", black_name="Black", turn_no=None,
                cube_value=1, cube_owner=None, status_text=None, theme="palm_springs"):
@@ -230,14 +241,28 @@ def draw_board(board, to_move=None, dice=None,
                   fill=black_checker, outline=outline, width=2)
         d.text((bar_x + BAR_W / 2, cy), str(board.bar["B"]), fill=white_checker, font=f_bar, anchor="mm")
 
-    # off (borne-off) trays, right side
-    f_off = _font(16, bold=True)
+    # off (borne-off) trays, right side -- each borne-off checker shown
+    # as a thin bar rather than just a count, like checkers lying flat
+    # in a real bear-off tray
+    f_off = _font(15, bold=True)
+    f_pip = _font(12)
     off_x = MARGIN + BOARD_W + 10
     off_box_w = OFF_W - 20
-    d.rectangle([off_x, board_top, off_x + off_box_w, board_top + TRI_H - 10], outline=text_dim, width=2)
-    d.rectangle([off_x, board_bottom - TRI_H + 10, off_x + off_box_w, board_bottom], outline=text_dim, width=2)
-    d.text((off_x + off_box_w / 2, board_top + TRI_H / 2 - 5), f"W\n{board.off['W']}", fill=text, font=f_off, anchor="mm")
-    d.text((off_x + off_box_w / 2, board_bottom - TRI_H / 2 + 5), f"B\n{board.off['B']}", fill=text, font=f_off, anchor="mm")
+    box_top_top, box_top_bottom = board_top, board_top + TRI_H - 10
+    box_bot_top, box_bot_bottom = board_bottom - TRI_H + 10, board_bottom
+    d.rectangle([off_x, box_top_top, off_x + off_box_w, box_top_bottom], outline=text_dim, width=2)
+    d.rectangle([off_x, box_bot_top, off_x + off_box_w, box_bot_bottom], outline=text_dim, width=2)
+
+    w_pips = board.pip_count("W")
+    b_pips = board.pip_count("B")
+    cx = off_x + off_box_w / 2
+    d.text((cx, box_top_top + 12), "W", fill=text, font=f_off, anchor="mm")
+    d.text((cx, box_bot_top + 12), "B", fill=text, font=f_off, anchor="mm")
+    d.text((cx, box_top_bottom - 9), f"{w_pips}p", fill=point_label, font=f_pip, anchor="mm")
+    d.text((cx, box_bot_bottom - 9), f"{b_pips}p", fill=point_label, font=f_pip, anchor="mm")
+
+    _draw_off_stack(d, off_x, off_x + off_box_w, box_top_top + 22, board.off["W"], white_checker, outline)
+    _draw_off_stack(d, off_x, off_x + off_box_w, box_bot_top + 22, board.off["B"], black_checker, outline)
 
     # doubling cube
     f_cube = _font(20, bold=True)
