@@ -243,13 +243,16 @@ def draw_board(board, to_move=None, dice=None,
 
     # off (borne-off) trays, right side -- each borne-off checker shown
     # as a thin bar rather than just a count, like checkers lying flat
-    # in a real bear-off tray
+    # in a real bear-off tray. Shrunk a bit from the board's full half-
+    # height so there's a real gap between the two boxes for the cube
+    # to live in without overlapping either box's contents.
     f_off = _font(15, bold=True)
     f_pip = _font(12)
     off_x = MARGIN + BOARD_W + 10
     off_box_w = OFF_W - 20
-    box_top_top, box_top_bottom = board_top, board_top + TRI_H - 10
-    box_bot_top, box_bot_bottom = board_bottom - TRI_H + 10, board_bottom
+    off_box_h = TRI_H - 30
+    box_top_top, box_top_bottom = board_top, board_top + off_box_h
+    box_bot_top, box_bot_bottom = board_bottom - off_box_h, board_bottom
     d.rectangle([off_x, box_top_top, off_x + off_box_w, box_top_bottom], outline=text_dim, width=2)
     d.rectangle([off_x, box_bot_top, off_x + off_box_w, box_bot_bottom], outline=text_dim, width=2)
 
@@ -261,19 +264,23 @@ def draw_board(board, to_move=None, dice=None,
     d.text((cx, box_top_bottom - 9), f"{w_pips}p", fill=point_label, font=f_pip, anchor="mm")
     d.text((cx, box_bot_bottom - 9), f"{b_pips}p", fill=point_label, font=f_pip, anchor="mm")
 
-    _draw_off_stack(d, off_x, off_x + off_box_w, box_top_top + 22, board.off["W"], white_checker, outline)
-    _draw_off_stack(d, off_x, off_x + off_box_w, box_bot_top + 22, board.off["B"], black_checker, outline)
+    _draw_off_stack(d, off_x, off_x + off_box_w, box_top_top + 22, board.off["W"], white_checker, outline,
+                     slot_h=10, bar_h=7)
+    _draw_off_stack(d, off_x, off_x + off_box_w, box_bot_top + 22, board.off["B"], black_checker, outline,
+                     slot_h=10, bar_h=7)
 
-    # doubling cube
+    # doubling cube -- always drawn in the gap between the two boxes
+    # (never inside either one), positioned within that gap by who owns
+    # it so the position still reads as "whose cube is this"
     f_cube = _font(20, bold=True)
     cube_cx = off_x + off_box_w / 2
-    if cube_owner is None:
-        cube_cy = (board_top + board_bottom) / 2
-    elif cube_owner == "W":
-        cube_cy = board_top + TRI_H - 15
-    else:
-        cube_cy = board_bottom - TRI_H + 15
     cube_size = 34
+    if cube_owner is None:
+        cube_cy = (box_top_bottom + box_bot_top) / 2
+    elif cube_owner == "W":
+        cube_cy = box_top_bottom + cube_size / 2 + 1
+    else:
+        cube_cy = box_bot_top - cube_size / 2 - 1
     d.rounded_rectangle(
         [cube_cx - cube_size / 2, cube_cy - cube_size / 2,
          cube_cx + cube_size / 2, cube_cy + cube_size / 2],
