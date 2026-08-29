@@ -145,6 +145,16 @@ def board_image(game_id):
     return Response(page, mimetype="text/html")
 
 
+def _finish(message_id):
+    """Every exit point from inbound() should go through this -- marks
+    the webhook delivery as fully handled only once we've actually
+    finished handling it (see Store.mark_seen for why that ordering
+    matters), then returns the standard empty-204 webhook response."""
+    if message_id:
+        store.mark_seen(message_id)
+    return ("", 204)
+
+
 @app.route("/inbound", methods=["POST"])
 def inbound():
     payload = request.get_json(force=True, silent=True) or {}
@@ -152,9 +162,13 @@ def inbound():
     # Webhook senders retry on timeouts and network hiccups as standard
     # practice -- ImprovMX includes a stable message-id we can use to make
     # sure a retried delivery of the same email is a harmless no-op rather
-    # than re-applying (or wrongly rejecting) the same move twice.
+    # than re-applying (or wrongly rejecting) the same move twice. This is
+    # a read-only check: the message is only marked as actually handled
+    # (via _finish, below) once we've finished processing it, so a crash
+    # partway through leaves it eligible for a real retry instead of
+    # being silently treated as already-done.
     message_id = payload.get("message-id")
-    if message_id and store.seen_message(message_id):
+    if message_id and store.is_seen(message_id):
         return ("", 204)
 
     # request is only valid inside this handler -- background threads
@@ -166,7 +180,7 @@ def inbound():
     sender, subject, body, quoted = msg["sender"], msg["subject"], msg["body"], msg["quoted"]
 
     if not sender:
-        return ("", 204)
+        return _finish(message_id)
 
     new_game_match = _NEW_GAME_RE.match(subject.strip())
     if new_game_match:
@@ -175,9 +189,9 @@ def inbound():
         sender_name = _guess_sender_name(payload, sender)
         desired_label = (opponent_name.split()[0] if opponent_name else "game").lower()
         label = _first_available_label(store, sender, opponent_email, desired_label)
-        create_and_announce(store, label, sender, sender_name, opponent_email, opponent_name,
-                             base_url=base_url)
-        return ("", 204)
+        _bg(create_and_announce, store, label, sender, sender_name, opponent_email, opponent_name,
+            base_url)
+        return _finish(message_id)
 
     label, input_text = _extract_label(subject)
     row = store.find_game_for_player(sender, label=label)
@@ -196,7 +210,7 @@ def inbound():
         else:
             _bg(send_text_email, sender, "No game found",
                 "I couldn't find a backgammon game with this address on it.")
-        return ("", 204)
+        return _finish(message_id)
 
     game = row["game"]
     player = WHITE if sender == row["white_email"] else BLACK
@@ -205,12 +219,12 @@ def inbound():
     board_link = f"{base_url}/board/{row['id']}"
 
     if game.is_over() and input_text.strip().lower().rstrip(".!") in REMATCH_TRIGGERS:
-        start_rematch(store, row, base_url=base_url)
-        return ("", 204)
+        _bg(start_rematch, store, row, base_url)
+        return _finish(message_id)
 
     if input_text.strip().lower().rstrip(".!") in RESEND_TRIGGERS:
         _bg(_resend_last_move, row, game, base_url, sender)
-        return ("", 204)
+        return _finish(message_id)
 
     try:
         result = game.process_input(player, input_text, body)
@@ -223,7 +237,7 @@ def inbound():
             _bg(send_text_email, opponent_email, f"[{row['label']}] still waiting on {sender_name}",
                 f"{sender_name}'s last message didn't go through, so it's still their move. "
                 f"No action needed from you.\n\nCurrent board: {board_link}")
-        return ("", 204)
+        return _finish(message_id)
 
     store.save(row["id"], game)
 
@@ -235,7 +249,7 @@ def inbound():
                              summary["multiplier"], summary["cube_value"], game.win_reason)
 
     _bg(_notify_both, row, game, body, result, base_url, player, quoted)
-    return ("", 204)
+    return _finish(message_id)
 
 
 @app.route("/tally", methods=["GET"])
@@ -409,14 +423,19 @@ def _history_lines(row, game, limit=None):
     its actual position in the game (so a 'last N' slice still shows the
     real turn numbers, not 1..N). Always shows the dice that were rolled,
     even for a turn with no legal move -- so a dance is at least visible
-    as 'rolled a 4-4, no legal move' rather than just vanishing."""
+    as 'rolled a 4-4, no legal move' rather than just vanishing. Cube
+    actions (double/take/drop/resign) have no dice at all -- shown as
+    plain 'Name: action' rather than a nonsensical 'rolled ?'."""
     numbered = list(enumerate(game.history, start=1))
     if limit is not None:
         numbered = numbered[-limit:]
     lines = []
     for turn_no, rec in numbered:
         name = _player_name(row, rec.player)
-        dice_str = f"{rec.dice[0]}-{rec.dice[1]}" if rec.dice else "?"
+        if not rec.dice:
+            lines.append(f"{turn_no}. {name}: {rec.move_text}")
+            continue
+        dice_str = f"{rec.dice[0]}-{rec.dice[1]}"
         body = "no legal move" if rec.move_text == "(no legal move)" else rec.move_text
         lines.append(f"{turn_no}. {name} rolled {dice_str}: {body}")
     return lines

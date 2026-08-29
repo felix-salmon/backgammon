@@ -55,9 +55,17 @@ applied, if some other legal sequence from the same roll would have used
 more dice, the move is rejected with a note on how many you could have
 used. Combined runs (using two or more dice on one checker to reach a
 point no single die connects to) are found automatically, including
-right after entering from the bar -- e.g. 'b/2' with a roll of all 1s
-enters on 1 and keeps going to 2 with a second 1, without needing the
-intermediate stop spelled out.
+right after entering from the bar ('b/2' with a roll of all 1s enters on
+1 and keeps going to 2 with a second 1) and bearing off ('8/off' with a
+3 and a 5 runs through 8/5/off or 8/3/off) -- no need to spell out the
+intermediate stop yourself either way.
+
+The other half of the official rule is also enforced: when only one die
+can be played at all (no sequence uses both), and more than one distinct
+die value was independently playable on its own, the larger one is
+mandatory. _infer_die's bear-off resolution defaults to the largest
+viable die for exactly this reason, and apply_turn separately rejects a
+submitted move that used a smaller one when a larger one was available.
 """
 
 from dataclasses import dataclass, field
@@ -250,6 +258,7 @@ class Game:
         work = self.board.clone()
         hits = []
         applied_display = []
+        consumed_dice = []
 
         for src, dest in hops:
             if dest == "auto":
@@ -258,13 +267,15 @@ class Game:
             die = _infer_die(work, mover, src, dest, remaining)
             combo = None
 
-            if die is None and isinstance(dest, int):
+            if die is None and (isinstance(dest, int) or dest == "off"):
                 # a single die doesn't bridge src->dest directly -- see if
                 # combining two or more of the remaining dice does, e.g.
                 # '13/7' with a 2 and a 4 in hand, run through 13/11/7,
-                # or entering from the bar and continuing on with more
-                # dice, e.g. 'b/2' with all 1s: enter on 1, then run to 2
-                if isinstance(src, int) and src > dest:
+                # entering from the bar and continuing on with more dice
+                # ('b/2' with all 1s: enter on 1, then run to 2), or
+                # bearing off with combined dice ('8/off' with a 3 and a
+                # 5: run through 8/5/off or 8/3/off)
+                if isinstance(src, int):
                     combo = _resolve_combined_run(work, mover, src, dest, remaining)
                 elif src == "bar":
                     combo = _resolve_bar_combined_run(work, mover, dest, remaining)
@@ -275,9 +286,10 @@ class Game:
                         abs_dest = rel_to_abs(mover, step_dest)
                         owner = work.owner_at_abs(abs_dest)
                         if owner is not None and owner != mover and abs(work.count_at_abs(abs_dest)) == 1:
-                            hits.append(step_dest)
+                            hits.append(abs_dest)
                     work.apply_single(mover, step_src, step_dest, step_die)
                     remaining.remove(step_die)
+                    consumed_dice.append(step_die)
                     applied_display.append(format_hop(mover, step_src, step_dest))
                 continue
 
@@ -293,10 +305,11 @@ class Game:
                 abs_dest = rel_to_abs(mover, dest)
                 owner = work.owner_at_abs(abs_dest)
                 if owner is not None and owner != mover and abs(work.count_at_abs(abs_dest)) == 1:
-                    hits.append(dest)
+                    hits.append(abs_dest)
 
             work.apply_single(mover, src, dest, die)
             remaining.remove(die)
+            consumed_dice.append(die)
             applied_display.append(format_hop(mover, src, dest))
 
         dice_used = dice_available - len(remaining)
@@ -306,6 +319,21 @@ class Game:
                 f"that only uses {dice_used} of your dice, but there's a legal way to use "
                 f"{max_usable} -- you have to play as much of your roll as you can"
             )
+        if dice_used == 1 and max_usable == 1:
+            # Only one die can be played this turn either way -- but if
+            # more than one distinct die VALUE could individually have
+            # been played (just not combined), the rule is you must play
+            # the larger one, not whichever you happened to pick.
+            playable_values = {
+                d for d in set(dice_multiset(self.dice))
+                if _legal_hops_for_die(self.board, mover, d)
+            }
+            used = consumed_dice[0]
+            if playable_values and used < max(playable_values):
+                raise IllegalMove(
+                    f"you played the {used}, but the {max(playable_values)} was also playable on "
+                    f"its own -- when you can only use one die, you have to play the larger one"
+                )
 
         self.board = work
         display_text = " ".join(applied_display)
@@ -376,6 +404,8 @@ class Game:
         self.pending_doubler = player
         self.pending_cube_value = self.cube_value * 2
         self.awaiting = AWAIT_DOUBLE_RESPONSE
+        self.history.append(TurnRecord(player=player, dice=(), message=message,
+                                        move_text=f"offered to double to {self.pending_cube_value}", hits=[]))
         return CubeEvent(kind="offered", player=player, value=self.pending_cube_value, message=message)
 
     def _cmd_take(self, player, message):
@@ -394,6 +424,8 @@ class Game:
         self.to_move = doubler
         self.dice = roll_dice()
         self.awaiting = AWAIT_MOVE
+        self.history.append(TurnRecord(player=player, dice=(), message=message,
+                                        move_text=f"took the double (cube now {self.cube_value})", hits=[]))
         return CubeEvent(kind="taken", player=player, value=self.cube_value, message=message)
 
     def _cmd_drop(self, player, message):
@@ -409,6 +441,8 @@ class Game:
         self.pending_doubler = None
         self.pending_cube_value = None
         self.dice = ()
+        self.history.append(TurnRecord(player=player, dice=(), message=message,
+                                        move_text="dropped the double", hits=[]))
         return CubeEvent(kind="dropped", player=player, value=value, message=message)
 
     def _cmd_resign(self, player, message):
@@ -417,6 +451,8 @@ class Game:
         self.winner = other(player)
         self.win_reason = "resignation"
         self.dice = ()
+        self.history.append(TurnRecord(player=player, dice=(), message=message,
+                                        move_text="resigned", hits=[]))
         return CubeEvent(kind="resigned", player=player, value=self.cube_value, message=message)
 
     def _cmd_greedy(self, player, message):
@@ -464,7 +500,7 @@ class Game:
                 abs_dest = rel_to_abs(player, dest)
                 owner = work.owner_at_abs(abs_dest)
                 if owner is not None and owner != player and abs(work.count_at_abs(abs_dest)) == 1:
-                    hits.append(dest)
+                    hits.append(abs_dest)
             work.apply_single(player, src, dest, die)
             display.append(format_hop(player, src, dest))
 
@@ -581,14 +617,23 @@ def _infer_die(board, player, src, dest, remaining):
         return die if die in remaining else None
 
     if dest == "off":
-        exact = src
-        if exact in remaining:
-            return exact
+        # Prefer the LARGEST die that can bear this checker off (exact
+        # match or overage), not the smallest -- this is what lets the
+        # higher-die rule actually be satisfiable via plain 'src/off'
+        # notation instead of just being enforced with no way to comply.
+        # If preferring the larger one would ever reduce how many dice
+        # end up usable overall, the maximal-play check right after this
+        # runs catches it and asks the player to rephrase -- so this
+        # never silently accepts an under-using play, worst case it
+        # asks for an explicit chain instead.
         highest = board.highest_rel_point_occupied(player)
-        if highest is not None and src == highest:
-            candidates = sorted(d for d in remaining if d >= src)
-            return candidates[0] if candidates else None
-        return None
+        can_overage = highest is not None and src == highest
+        candidates = set()
+        if src in remaining:
+            candidates.add(src)
+        if can_overage:
+            candidates.update(d for d in remaining if d > src)
+        return max(candidates) if candidates else None
 
     if not isinstance(dest, int):
         return None
@@ -602,15 +647,21 @@ def _infer_die(board, player, src, dest, remaining):
 def _resolve_combined_run(board, player, src, dest, remaining_dice):
     """Check whether running through one or more of the remaining dice
     connects src->dest -- e.g. '13/7' (6 pips) with a 2 and a 4 in hand,
-    via 13/11/7. Tries every subset of the remaining dice (smallest
-    first) and every ordering of it, simulating each intermediate stop
-    for legality. Returns a list of (step_src, step_dest, step_die) if
-    some ordering works end-to-end and lands exactly on dest, else None.
-    (A size-1 subset is included so this can also serve as the single-die
+    via 13/11/7. dest may also be 'off', for bearing off with the dice
+    summing to exactly src's pip count (e.g. '8/off' with a 3 and a 5,
+    via 8/5/off or 8/3/off) -- this is deliberately exact-sum only, not
+    combined with the separate overage rule (a single larger-than-needed
+    die on the rearmost checker), which stays a single-die concept.
+    Tries every subset of the remaining dice (smallest first) and every
+    ordering of it, simulating each intermediate stop for legality.
+    Returns a list of (step_src, step_dest, step_die) if some ordering
+    works end-to-end and lands exactly on dest, else None. (A size-1
+    subset is included so this can also serve as the single-die
     continuation check after a bar entry -- see _resolve_bar_combined_run.
     Callers that already ruled out a direct single-die match themselves
     just get None back for size 1, same as before.)"""
-    needed = src - dest
+    target_off = (dest == "off")
+    needed = src if target_off else src - dest
     if needed <= 0:
         return None
 
@@ -628,8 +679,9 @@ def _resolve_combined_run(board, player, src, dest, remaining_dice):
                 cur = src
                 probe = board.clone()
                 ok_all = True
-                for d in perm:
-                    nxt = cur - d
+                for i, d in enumerate(perm):
+                    is_last = (i == len(perm) - 1)
+                    nxt = "off" if (is_last and target_off) else cur - d
                     ok, _ = is_legal_single(probe, player, cur, nxt, d)
                     if not ok:
                         ok_all = False
@@ -637,7 +689,8 @@ def _resolve_combined_run(board, player, src, dest, remaining_dice):
                     probe.apply_single(player, cur, nxt, d)
                     steps.append((cur, nxt, d))
                     cur = nxt
-                if ok_all and cur == dest:
+                target_reached = (cur == "off") if target_off else (cur == dest)
+                if ok_all and target_reached:
                     return steps
     return None
 
@@ -780,20 +833,25 @@ def _is_forced(board, player, dice):
 
 
 def _greedy_hops(board, player, dice):
-    """For each die (largest first), move the most-advanced legal checker
-    -- i.e. always prefer bearing off, then the highest-numbered point.
-    Meant for pure races; makes no attempt at safety."""
-    dice_list = sorted(dice_multiset(dice), reverse=True)
-    hops = []
-    work = board.clone()
-    for die in dice_list:
-        candidates = _legal_hops_for_die(work, player, die)
-        if not candidates:
-            continue
-        if candidates[0][0] == "bar":
-            src, dest = candidates[0]
-        else:
-            src, dest = max(candidates, key=lambda c: c[0])
-        hops.append((src, dest, die))
-        work.apply_single(player, src, dest, die)
+    """A maximal-length sequence of hops for this dice roll -- picked
+    from the same full search _enumerate_full_turns uses for forced
+    moves, so it can never strand a die the way a purely local
+    largest-die-first heuristic can (moving the most-advanced checker
+    first sometimes blocks the other die from having anywhere legal to
+    go, even though a different choice would have used both). Among the
+    maximal options, prefers the one that moves the most-advanced
+    checkers earliest, matching the old heuristic's spirit as a
+    tie-break rather than as the primary strategy. Meant for pure races;
+    makes no attempt at safety."""
+    maximal = _enumerate_full_turns(board, player, dice)
+    if not maximal:
+        return []
+
+    def score(candidate):
+        hops, _ = candidate
+        # Sort key: prefer hops (in order played) starting from the
+        # highest points first -- bar counts as "furthest out" of all.
+        return tuple(-(999 if src == "bar" else src) for src, dest, die in hops)
+
+    hops, _ = min(maximal, key=score)
     return hops

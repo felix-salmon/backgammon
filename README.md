@@ -45,8 +45,14 @@ Move notation -- any of these, mixed freely, even within the same turn:
   every ordering, so a blocked intermediate point on one path doesn't
   stop it from trying the other). Works with doubles too, combining as
   many dice as needed.
-- `bar/19` or `bar-19` or `b-19` -- entering from the bar (`b` is short for `bar`)
-- `6/off` or `6-off` -- bearing off
+- `bar/19` or `bar-19` or `b-19` -- entering from the bar (`b` is short for `bar`).
+  Combines with the same multi-die logic as above too -- `b/2` with a roll
+  of all 1s enters on 1 and keeps going to 2 with a second 1.
+- `6/off`, `6-off`, `6/h`, `6/home` -- bearing off (`h`/`home` and `off`
+  are interchangeable; always displayed back as `/off`). Also combines
+  with multiple dice the same way normal moves do -- `8/off` with a 3
+  and a 5 runs through 8/5/off or 8/3/off automatically, no need to
+  spell out the intermediate stop yourself.
 - `22` (a bare point, no `/` or `-`) -- move whatever's on 22, letting the
   engine work out the destination, as long as exactly one of your
   remaining dice gives a legal move from there. Chain several with spaces
@@ -111,7 +117,8 @@ If someone doubles, the other player replies **`take`**/**`accept`** (cube
 doubles, they now own it, and play continues) or **`drop`**/**`pass`**
 (they concede at the current cube value). Send **`auto`** any time to go
 back to automatic rolling for your own turns. There's also a plain
-**`resign`** if someone just wants to concede outright.
+**`resign`** if someone just wants to concede outright -- like real money
+play, this works at any time, including when it isn't your turn.
 
 ## Forced moves and greedy racing
 
@@ -122,9 +129,12 @@ chain through several turns in a row if both of you keep getting forced
 positions (common in a tight bear-off race).
 
 Send **`greedy`** instead of a move and the game plays your current dice
-for you, always moving the most-advanced checker with each die. It's
+for you, preferring to advance your most-advanced checkers first. It's
 meant for pure races once no contact is possible -- it has no notion of
-safety, so don't use it while there's still a blot in play.
+safety, so don't use it while there's still a blot in play. It always
+plays a fully maximal sequence (same rule as a normal move -- see below),
+never leaving a die stranded just because the simple "biggest checker,
+biggest die" heuristic happened to block itself.
 
 ## Running tally
 
@@ -133,7 +143,10 @@ cube value, doubled to 2x if the loser bore off zero checkers (a gammon),
 or tripled to 3x if the loser also still had a checker on the bar or in
 the winner's home board (a backgammon). Declined doubles and resignations
 always score at just the current cube value -- no gammon/backgammon
-multiplier, since the board never finished.
+multiplier, since the board never finished. There's no Jacoby rule (gammons
+and backgammons always count even with the cube still centered) -- normal
+for a from-scratch PBM recreation like this one, just worth knowing if
+you're used to a club or casino table that plays with it.
 
 The running head-to-head score between two players (across every game
 they've played, regardless of label) shows up automatically in the
@@ -207,9 +220,18 @@ any legal sequence can manage, not just stop once you've found *a*
 legal move. If a submitted move leaves dice unplayed that could have
 been used, it's rejected with a note on how many you could have played.
 Combining two or more dice to reach a point no single die connects to
-is found automatically -- including right after entering from the bar,
-e.g. `b/2` with a roll of all 1s enters on 1 and continues to 2 with a
-second 1, no need to spell out the intermediate stop.
+is found automatically -- including right after entering from the bar
+(`b/2` with a roll of all 1s enters on 1 and continues to 2 with a
+second 1) and bearing off (`8/off` with a 3 and a 5 runs through
+8/5/off or 8/3/off) -- no need to spell out the intermediate stop
+yourself either way.
+
+The other half of the official rule is also enforced: if only one die
+can be played at all (using both isn't possible any way you slice it),
+and more than one die *value* was individually playable on its own, you
+have to play the larger one. A single checker that could bear off with
+either a 5 or a 3, with nothing else on the board to spend the other
+die on, must use the 5.
 
 ## Wiring up actual email
 
@@ -326,3 +348,42 @@ running at once; the app strips it back off before parsing.
   new text inside what looks like a quote).
 - ImprovMX's webhook always comes from a fixed IP (`15.237.103.194`) if you
   want to lock down your Flask endpoint to only accept requests from there.
+
+## Security, realistically
+
+This is built for "two or three friends playing on a shared, unlisted
+address," not as a hardened public service -- worth being clear-eyed
+about what that does and doesn't cover:
+
+- **`/inbound` trusts whatever hits it.** There's no shared secret or
+  signature check -- anyone who finds the URL and POSTs a plausible
+  `{from, subject, text}` body can play moves as if they were you or
+  Simon. The ImprovMX fixed-IP note above is the only real mitigation,
+  and it's on you to actually apply it (e.g. at your firewall/proxy, or
+  a check at the top of `/inbound`) if you want it enforced -- it isn't
+  automatic. I didn't add that check myself in this pass: getting IP
+  detection right behind Render's proxy needs testing against real
+  ImprovMX traffic to be sure it doesn't accidentally block the real
+  thing, which isn't something I can verify from here without risking
+  breaking your working deployment. Worth doing if you want it; just
+  flagging it rather than guessing at it silently.
+- **`/board/<id>` and `/tally` are public**, and game IDs are small
+  sequential integers -- anyone who guesses or is given a link can watch
+  a game's position and history. No real data at stake beyond that.
+- **The `new game: email, name` command will email whoever you name,**
+  from your domain, with no confirmation step. That's the feature working
+  as asked for -- convenient, no curl needed -- but it means if this
+  address ever leaked publicly, someone could use it to send unsolicited
+  mail "from" felixsalmon.com to arbitrary addresses. Worth keeping the
+  address unlisted for that reason, same as you'd already want to for
+  the reason above.
+- **The admin token check (`X-Admin-Token`) uses a plain `!=` comparison,**
+  not constant-time. A timing attack against it is a real category of
+  bug in general, but not a practical concern for a token only you ever
+  type into a terminal.
+
+None of this is likely to matter for how you're actually using it. If
+you ever want any of it tightened up -- a webhook shared secret, IP
+allowlisting, a confirmation step before emailing a new address -- worth
+asking for specifically, since each involves a real tradeoff between
+security and the convenience the corresponding feature was built for.

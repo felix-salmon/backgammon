@@ -43,9 +43,28 @@ CREATE TABLE IF NOT EXISTS results (
 
 
 class Store:
+    """One SQLite file, one row per game.
+
+    Concurrency note: load-modify-save (read a game, apply a move,
+    write it back) is not wrapped in a transaction, so it's only safe
+    under a single writer -- which is what this project's README has
+    you run (`gunicorn app:app`, no -w flag: one worker, requests
+    handled one at a time). With more than one worker or thread able to
+    process requests concurrently, two replies to the same game
+    arriving close together could race and one could silently clobber
+    the other's update. WAL mode below helps general read/write
+    concurrency but does not by itself fix that specific race -- fixing
+    it properly would need each save to check the row hasn't changed
+    since it was loaded (e.g. a version column) and retry if it has.
+    Not implemented, since it's real complexity for a scenario ("two
+    people's replies to the same specific game landing in the same
+    instant") that a single-worker deployment doesn't have.
+    """
+
     def __init__(self, path="backgammon.db"):
         self.path = path
         with closing(sqlite3.connect(self.path)) as con:
+            con.execute("PRAGMA journal_mode=WAL")
             con.executescript(SCHEMA)
             # migrate older databases created before reminders existed --
             # CREATE TABLE IF NOT EXISTS above is a no-op on a table that
@@ -59,6 +78,12 @@ class Store:
             con.commit()
 
     def create_game(self, label, white_email, black_email, white_name="White", black_name="Black"):
+        # normalize case at the point of storage -- inbound sender
+        # addresses always arrive lowercased already, so a game created
+        # with different casing (e.g. typed by hand via curl) would
+        # otherwise silently never match anything that player sends in
+        white_email = white_email.strip().lower()
+        black_email = black_email.strip().lower()
         game = Game.new()
         now = time.time()
         with closing(sqlite3.connect(self.path)) as con:
@@ -99,7 +124,11 @@ class Store:
     def find_game_for_player(self, email, label=None):
         """Find the (probably unique) in-progress game a given email address is part of.
         If a player has several games going, pass label to disambiguate (e.g. from a
-        tag you put in the email subject, like '[game2]')."""
+        tag you put in the email subject, like '[game2]'). Without a label, finished
+        games are only used as a last resort -- if this player has exactly one game
+        still in progress, that's the one returned even if other, finished games
+        also exist under the same email (e.g. right after a rematch, when the old
+        finished game and the new live one both still match by address)."""
         with closing(sqlite3.connect(self.path)) as con:
             rows = con.execute(
                 "SELECT id FROM games WHERE white_email=? OR black_email=?", (email, email)
@@ -113,9 +142,17 @@ class Store:
                 if row and row["label"].lower() == label.lower():
                     return row
             return None
-        if len(ids) == 1:
-            return self.load(ids[0])
-        # multiple games -- caller should disambiguate by label
+        loaded = [self.load(gid) for gid in ids]
+        loaded = [r for r in loaded if r is not None]
+        in_progress = [r for r in loaded if not r["game"].is_over()]
+        if len(in_progress) == 1:
+            return in_progress[0]
+        if not in_progress and len(loaded) == 1:
+            # their only game at all happens to be finished -- still
+            # useful to resolve unlabeled (e.g. 'resend' or 'rematch')
+            return loaded[0]
+        # multiple in-progress games, or multiple finished ones with none
+        # live -- genuinely ambiguous, caller should ask for a label
         return None
 
     def list_for_player(self, email):
@@ -136,6 +173,31 @@ class Store:
                 (email_a, email_b, email_b, email_a),
             ).fetchall()
         return rows
+
+    def is_seen(self, message_id):
+        """Read-only idempotency check -- has this webhook delivery
+        already been fully handled? Doesn't record anything itself; see
+        mark_seen, which the caller should call only after successfully
+        finishing the work for this message."""
+        with closing(sqlite3.connect(self.path)) as con:
+            row = con.execute(
+                "SELECT 1 FROM processed_messages WHERE message_id=?", (message_id,)
+            ).fetchone()
+        return row is not None
+
+    def mark_seen(self, message_id):
+        """Record a webhook delivery as fully handled. Call this only
+        once the corresponding work (applying a move, sending a reply,
+        etc.) has actually completed -- marking it seen any earlier
+        means a crash between marking and finishing would make a retry
+        of a genuinely-lost message look like a harmless duplicate and
+        get silently dropped instead of retried."""
+        with closing(sqlite3.connect(self.path)) as con:
+            con.execute(
+                "INSERT OR IGNORE INTO processed_messages (message_id, processed_at) VALUES (?, ?)",
+                (message_id, time.time()),
+            )
+            con.commit()
 
     def seen_message(self, message_id):
         """Idempotency check for webhook deliveries. Returns True if this

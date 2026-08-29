@@ -128,7 +128,7 @@ def _parse_point(p):
     p = p.strip().lower()
     if p in ("bar", "b"):
         return "bar"
-    if p in ("off", "o"):
+    if p in ("off", "o", "h", "home"):
         return "off"
     if not re.fullmatch(r"\d{1,2}", p):
         raise NotationError(f"'{p}' isn't a valid point")

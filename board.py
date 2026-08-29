@@ -9,12 +9,14 @@ Points are stored ABSOLUTELY as 1..24:
   - board.points[i] holds the checker count on absolute point (i+1).
     Positive = White checkers, Negative = Black checkers, 0 = empty.
 
-For NOTATION (what players type), each player always describes the board
-from their own point of view: "24" is always their furthest point, "1-6"
-is always their home board, regardless of color. This matches how most
-backgammon notation (and the old PBM servers) worked. Conversion between
-a player's relative numbering and the absolute board is handled by
-rel_to_abs / abs_to_rel below.
+For NOTATION (what players type), point numbers always mean exactly what's
+printed on the board image -- the same absolute 1-24 numbering for both
+colors, with no "count from your own side" conversion. This is a deliberate
+departure from traditional backgammon notation (where each player counts
+from their own 24), made after that traditional convention proved
+confusing for one player in practice. rel_to_abs / abs_to_rel below
+convert between this absolute numbering and each player's own relative
+frame, which is what the rules engine itself works in internally.
 """
 
 from dataclasses import dataclass, field
@@ -227,8 +229,11 @@ def is_legal_single(board, player, src, dest, die):
             return False, f"can't bear off from {src} with a {die} while you have checkers further out"
         return False, f"a {die} from point {src} doesn't reach off"
 
-    # normal point-to-point
-    if not isinstance(dest, int) or not (0 <= dest <= 24):
+    # normal point-to-point (dest must be a real point, 1-24 -- 0 is never
+    # valid here since that always means "off" and must arrive as that
+    # sentinel; letting a bare 0 through would silently index points[-1],
+    # i.e. point 24, via Python's negative-index wraparound)
+    if not isinstance(dest, int) or not (1 <= dest <= 24):
         return False, f"invalid destination point {dest}"
     if src - die != dest:
         return False, f"point {src} to point {dest} is not a legal move with a {die}"
