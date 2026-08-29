@@ -30,6 +30,7 @@ from game import (
 )
 from render import save_board_png
 from state import Store
+import reminders
 from email_io import parse_inbound_improvmx, send_board_email, send_text_email
 from admin import create_and_announce, start_rematch, REMATCH_TRIGGERS, _first_available_label
 from board import WHITE, BLACK, other
@@ -53,6 +54,7 @@ _NEW_GAME_RE = re.compile(
     r"^new\s*game\s*:?\s*([^\s,]+@[^\s,]+)[,\s]+(.+)$", re.IGNORECASE
 )
 store = Store(DB_PATH)
+reminders.start_background_loop(store)
 
 app = Flask(__name__)
 

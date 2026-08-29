@@ -166,6 +166,17 @@ borne-off tally -- the standard "how many total pips left to bear
 everything off" race number. Useful for eyeballing who's actually ahead
 without doing the arithmetic yourself.
 
+## Reminders
+
+If a game goes quiet, whoever needs to act gets a gentle nudge automatically
+-- once at 48 hours of inactivity, and again at 7 days if it's still their
+move. Each reminder includes the current board and a link, and only goes
+to the person who actually needs to act (during a pending double, that's
+the responder, not the doubler). This runs as a background check inside
+the same process as the web app, roughly every 30 minutes -- no separate
+scheduled job to set up. It only assumes one thing: a single gunicorn
+worker, which is what `gunicorn app:app` (no `-w` flag) already gives you.
+
 ## Multiple games, multiple people
 
 Nothing stops you from running several games at once -- against Simon,
@@ -255,6 +266,12 @@ from the sender).
    who gets the quiet "still waiting on X" heads-up when someone's move
    fails. Defaults to just `felix@felixsalmon.com`; set it explicitly if
    you want to add people or change that.
+
+   Also set `PUBLIC_BASE_URL` to your deployed URL once you know it
+   (step 7 below), e.g. `https://backgammon-pbm.onrender.com` -- this is
+   what lets the reminder emails (see below) include a board link, since
+   they're sent from a background thread with no incoming request to
+   read the URL from the way normal replies can.
 7. Deploy. Render gives you a URL like `https://backgammon-pbm.onrender.com`.
 
 ### 3. Point ImprovMX at it

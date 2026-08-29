@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS games (
     black_name TEXT NOT NULL,
     state_json TEXT NOT NULL,
     created_at REAL NOT NULL,
-    updated_at REAL NOT NULL
+    updated_at REAL NOT NULL,
+    reminder_48h_at REAL,
+    reminder_7d_at REAL
 );
 CREATE TABLE IF NOT EXISTS processed_messages (
     message_id TEXT PRIMARY KEY,
@@ -45,6 +47,15 @@ class Store:
         self.path = path
         with closing(sqlite3.connect(self.path)) as con:
             con.executescript(SCHEMA)
+            # migrate older databases created before reminders existed --
+            # CREATE TABLE IF NOT EXISTS above is a no-op on a table that
+            # already exists, so a pre-existing games table needs these
+            # columns added by hand.
+            cols = {r[1] for r in con.execute("PRAGMA table_info(games)").fetchall()}
+            if "reminder_48h_at" not in cols:
+                con.execute("ALTER TABLE games ADD COLUMN reminder_48h_at REAL")
+            if "reminder_7d_at" not in cols:
+                con.execute("ALTER TABLE games ADD COLUMN reminder_7d_at REAL")
             con.commit()
 
     def create_game(self, label, white_email, black_email, white_name="White", black_name="Black"):
@@ -174,3 +185,25 @@ class Store:
             points[winner_email] = points.get(winner_email, 0) + pts
         return {"a": email_a, "b": email_b, "games_played": len(rows),
                 "wins": wins, "points": points}
+
+    def list_all_raw(self):
+        """Every game row, un-deserialized, for the reminder checker to
+        scan. Includes reminder_48h_at/reminder_7d_at -- each holds the
+        updated_at value the game had when that reminder was last sent,
+        so comparing it against the CURRENT updated_at tells you whether
+        a reminder has already gone out for this specific waiting period
+        (any new activity changes updated_at, which naturally clears the
+        way for a fresh reminder next time the game goes quiet again)."""
+        with closing(sqlite3.connect(self.path)) as con:
+            con.row_factory = sqlite3.Row
+            rows = con.execute(
+                "SELECT id, label, white_email, black_email, white_name, black_name, "
+                "state_json, updated_at, reminder_48h_at, reminder_7d_at FROM games"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_reminder_sent(self, game_id, which, updated_at_value):
+        col = "reminder_48h_at" if which == "48h" else "reminder_7d_at"
+        with closing(sqlite3.connect(self.path)) as con:
+            con.execute(f"UPDATE games SET {col}=? WHERE id=?", (updated_at_value, game_id))
+            con.commit()
