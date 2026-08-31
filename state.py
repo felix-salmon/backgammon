@@ -52,19 +52,30 @@ class Store:
     handled one at a time). With more than one worker or thread able to
     process requests concurrently, two replies to the same game
     arriving close together could race and one could silently clobber
-    the other's update. WAL mode below helps general read/write
-    concurrency but does not by itself fix that specific race -- fixing
-    it properly would need each save to check the row hasn't changed
-    since it was loaded (e.g. a version column) and retry if it has.
-    Not implemented, since it's real complexity for a scenario ("two
-    people's replies to the same specific game landing in the same
-    instant") that a single-worker deployment doesn't have.
+    the other's update. Fixing that properly would need each save to
+    check the row hasn't changed since it was loaded (e.g. a version
+    column) and retry if it has. Not implemented, since it's real
+    complexity for a scenario a single-worker deployment doesn't have.
+
+    Journal mode is deliberately kept at SQLite's default (DELETE), not
+    WAL -- WAL was tried briefly as a cheap concurrency improvement but
+    caused 'disk I/O error' on every query on at least one real hosting
+    disk backend (Render's persistent disk, in practice). Not every
+    filesystem supports the shared-memory/locking behavior WAL needs.
+    The __init__ below actively forces the database back to DELETE mode
+    rather than just not re-requesting WAL, since journal mode is a
+    persistent property of the database file itself -- a database that
+    already got flipped to WAL by a previous version of this code would
+    otherwise stay in that broken state indefinitely.
     """
 
     def __init__(self, path="backgammon.db"):
         self.path = path
         with closing(sqlite3.connect(self.path)) as con:
-            con.execute("PRAGMA journal_mode=WAL")
+            try:
+                con.execute("PRAGMA journal_mode=DELETE")
+            except sqlite3.OperationalError:
+                pass
             con.executescript(SCHEMA)
             # migrate older databases created before reminders existed --
             # CREATE TABLE IF NOT EXISTS above is a no-op on a table that
