@@ -12,6 +12,11 @@ Interchangeable styles -- mix and match freely, even within the same turn:
     2x24                 shorthand: move 2 checkers off point 24, one per
                           available die (needs the current dice roll to
                           expand -- see the `dice` argument below)
+    2x13/3   or  2x13-3   different shorthand: repeat this exact hop N
+                          times (for doubles) -- e.g. two checkers
+                          running all the way from 13 to 3 on a double 5,
+                          each combining two 5s to get there. Works with
+                          'off'/'bar' as either end too.
     22                   bare point: move whatever's on 22, inferring the
                           destination -- only works if exactly one of your
                           remaining dice gives a legal move from there;
@@ -50,6 +55,13 @@ class NotationError(ValueError):
 
 
 _SHORTHAND_RE = re.compile(r"^(\d+)[xX](\d{1,2}|bar|b)$")
+# 'Nx SRC/DEST' or 'Nx SRC-DEST' -- repeat this exact hop N times (e.g.
+# '2x13/3' or '2x13-3' for a double-5 running two checkers all the way
+# from 13 to 3, each using two 5s combined). Different from the plain
+# 'NxPOINT' shorthand above, which has no destination and infers a
+# different one per die -- this one names a single destination and
+# repeats getting there, however many dice that actually takes each time.
+_SHORTHAND_HOP_RE = re.compile(r"^(\d+)[xX](\w{1,4})[/-](\w{1,4})$")
 
 
 def parse_moves(text, player, dice=None):
@@ -75,6 +87,11 @@ def parse_moves(text, player, dice=None):
         m = _SHORTHAND_RE.match(tok)
         if m:
             hops.extend(_expand_shorthand(m, player, dice, tok))
+            continue
+
+        m2 = _SHORTHAND_HOP_RE.match(tok)
+        if m2:
+            hops.extend(_expand_shorthand_hop(m2, player, tok))
             continue
 
         if "/" in tok:
@@ -122,6 +139,24 @@ def _expand_shorthand(m, player, dice, tok):
                 dest = "off"
         hops.append((src, dest))
     return hops
+
+
+def _expand_shorthand_hop(m, player, tok):
+    n = int(m.group(1))
+    if n < 1:
+        raise NotationError(f"'{tok}': need at least 1 repetition")
+    src_pt = _parse_point(m.group(2))
+    dest_pt = _parse_point(m.group(3))
+    if src_pt == "off":
+        raise NotationError("'off' isn't a valid starting point")
+    src = _to_relative(player, src_pt)
+    dest = _to_relative(player, dest_pt)
+    # Just repeat the identical (src, dest) hop n times -- exactly as if
+    # it had been typed out n times by hand -- and let the normal
+    # per-hop resolution (direct die match, or combined dice if no
+    # single die connects them) work out what each repetition actually
+    # takes, same as any other move.
+    return [(src, dest)] * n
 
 
 def _parse_point(p):

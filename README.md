@@ -37,6 +37,11 @@ Move notation -- any of these, mixed freely, even within the same turn:
 - `2x24` -- shorthand: run 2 checkers off point 24, one per available die
   (needs the actual dice roll to expand, so it only works mid-game, not
   standalone)
+- `2x13/3` or `2x13-3` -- a different shorthand: repeat this exact hop N
+  times, rather than using N different dice on N different destinations.
+  Meant for doubles -- "2x13/3" with double 5s runs two checkers all the
+  way from 13 to 3, each combining two 5s to get there. Works with
+  bear-off and bar-entry destinations too (`2x6/off`, `2xb/4`).
 - `13/11/8` or `13-11-8` -- one checker using both dice in sequence, with
   the intermediate stop spelled out
 - `13/8` -- the same move, but written as just the endpoints. If no single
