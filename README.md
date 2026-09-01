@@ -201,10 +201,17 @@ Nothing stops you from running several games at once -- against Simon,
 against someone else, whatever -- as long as each has its own label (see
 `start_game.py`/the admin endpoint). If a player only has one game going,
 they can leave the `[label]` off their subject entirely and it'll figure
-out which game they mean. Once someone has more than one game running,
-they need to lead their subject with the right label, e.g. `[g2] 24/18`
--- if they forget, they'll get an email back listing their active labels
-rather than the move silently landing in the wrong game.
+out which game they mean -- and this still works even if their subject
+*does* carry a label, as long as it's stale (pointing at a finished game)
+or just wrong, since replying to an old email thread naturally drags its
+original subject along. Rematch and resend are the exception: those
+specifically need to reference a particular game by its real label
+(often a finished one), so a stale label there is honored as typed
+rather than silently redirected. Once someone has more than one game
+actually in progress, they need to lead their subject with the right
+label, e.g. `[g2] 24/18` -- if they forget, they'll get an email back
+listing their active labels rather than the move silently landing in
+the wrong game.
 
 ## Rematches
 

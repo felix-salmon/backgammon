@@ -132,6 +132,21 @@ class Store:
             )
             con.commit()
 
+    def find_unique_live_game(self, email):
+        """The player's one and only in-progress game, if they have
+        exactly one -- regardless of any other finished games under the
+        same email. Used as a fallback when an explicit label points at
+        a finished game (or no game at all), but the sender clearly only
+        has one active game -- e.g. replying to a stale email thread
+        whose subject still carries an old, now-finished label."""
+        with closing(sqlite3.connect(self.path)) as con:
+            rows = con.execute(
+                "SELECT id FROM games WHERE white_email=? OR black_email=?", (email, email)
+            ).fetchall()
+        loaded = [self.load(r[0]) for r in rows]
+        in_progress = [r for r in loaded if r is not None and not r["game"].is_over()]
+        return in_progress[0] if len(in_progress) == 1 else None
+
     def find_game_for_player(self, email, label=None):
         """Find the (probably unique) in-progress game a given email address is part of.
         If a player has several games going, pass label to disambiguate (e.g. from a

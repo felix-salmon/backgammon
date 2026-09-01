@@ -195,6 +195,22 @@ def inbound():
 
     label, input_text = _extract_label(subject)
     row = store.find_game_for_player(sender, label=label)
+
+    # A label pointing at nothing, or at a game that's already finished,
+    # still resolves cleanly if the sender has exactly one game actually
+    # in progress -- covers replying to a stale email thread whose
+    # subject still carries an old label. Doesn't apply to rematch/resend,
+    # which specifically need to reference a particular (often finished)
+    # game by that label, not just "whichever game is live right now".
+    normalized_input = input_text.strip().lower().rstrip(".!")
+    targets_a_specific_finished_game = (
+        normalized_input in REMATCH_TRIGGERS or normalized_input in RESEND_TRIGGERS
+    )
+    if (row is None or row["game"].is_over()) and not targets_a_specific_finished_game:
+        fallback = store.find_unique_live_game(sender)
+        if fallback is not None:
+            row = fallback
+
     if row is None:
         matches = store.list_for_player(sender)
         if label:
