@@ -259,25 +259,40 @@ def draw_board(board, to_move=None, dice=None,
     w_pips = board.pip_count("W")
     b_pips = board.pip_count("B")
     cx = off_x + off_box_w / 2
-    d.text((cx, box_top_top + 12), "W", fill=text, font=f_off, anchor="mm")
-    d.text((cx, box_bot_top + 12), "B", fill=text, font=f_off, anchor="mm")
-    d.text((cx, box_top_bottom - 9), f"{w_pips}p", fill=point_label, font=f_pip, anchor="mm")
-    d.text((cx, box_bot_bottom - 9), f"{b_pips}p", fill=point_label, font=f_pip, anchor="mm")
 
-    _draw_off_stack(d, off_x, off_x + off_box_w, box_top_top + 22, board.off["W"], white_checker, outline,
+    # Which color's home board is at the top vs bottom flips along with
+    # the board rotation above -- so the tray/pip count for each color
+    # should flip the same way, landing next to that color's own home
+    # board (and where their checkers are actually bearing off) instead
+    # of sitting at a screen position fixed regardless of whose it is.
+    top_color, bottom_color = ("W", "B") if rotate else ("B", "W")
+    top_pips = w_pips if top_color == "W" else b_pips
+    bottom_pips = b_pips if top_color == "W" else w_pips
+    top_off_count = board.off[top_color]
+    bottom_off_count = board.off[bottom_color]
+    top_checker_color = white_checker if top_color == "W" else black_checker
+    bottom_checker_color = white_checker if bottom_color == "W" else black_checker
+
+    d.text((cx, box_top_top + 12), top_color, fill=text, font=f_off, anchor="mm")
+    d.text((cx, box_bot_top + 12), bottom_color, fill=text, font=f_off, anchor="mm")
+    d.text((cx, box_top_bottom - 9), f"{top_pips}p", fill=point_label, font=f_pip, anchor="mm")
+    d.text((cx, box_bot_bottom - 9), f"{bottom_pips}p", fill=point_label, font=f_pip, anchor="mm")
+
+    _draw_off_stack(d, off_x, off_x + off_box_w, box_top_top + 22, top_off_count, top_checker_color, outline,
                      slot_h=10, bar_h=7)
-    _draw_off_stack(d, off_x, off_x + off_box_w, box_bot_top + 22, board.off["B"], black_checker, outline,
+    _draw_off_stack(d, off_x, off_x + off_box_w, box_bot_top + 22, bottom_off_count, bottom_checker_color, outline,
                      slot_h=10, bar_h=7)
 
     # doubling cube -- always drawn in the gap between the two boxes
     # (never inside either one), positioned within that gap by who owns
-    # it so the position still reads as "whose cube is this"
+    # it -- using the same flipped top/bottom mapping as the trays above,
+    # so the cube always sits next to its owner's tray, not a fixed side
     f_cube = _font(20, bold=True)
     cube_cx = off_x + off_box_w / 2
     cube_size = 34
     if cube_owner is None:
         cube_cy = (box_top_bottom + box_bot_top) / 2
-    elif cube_owner == "W":
+    elif cube_owner == top_color:
         cube_cy = box_top_bottom + cube_size / 2 + 1
     else:
         cube_cy = box_bot_top - cube_size / 2 - 1
