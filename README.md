@@ -195,6 +195,15 @@ the same process as the web app, roughly every 30 minutes -- no separate
 scheduled job to set up. It only assumes one thing: a single gunicorn
 worker, which is what `gunicorn app:app` (no `-w` flag) already gives you.
 
+## Checking all your games at once
+
+Send **`status`** (or `games`) as the whole subject and you'll get back a
+one-line summary of every active game you're in -- who you're playing
+and exactly what's needed next, e.g. `[g1] vs Simon: Felix to play 5-2.`
+or `[alice] vs Alice: Felix to respond to a double.` Finished games are
+left out, and whichever games need *your* move come first. If you don't
+have anything active, you'll just be told that instead of an empty list.
+
 ## Multiple games, multiple people
 
 Nothing stops you from running several games at once -- against Simon,

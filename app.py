@@ -46,6 +46,7 @@ NOTIFY_WAITING_EMAILS = {
     if e.strip()
 }
 RESEND_TRIGGERS = {"resend", "resend last move", "resend move"}
+STATUS_TRIGGERS = {"status", "games", "my games"}
 # "new game: alice@example.com, Alice" (or "newgame alice@example.com Alice",
 # colon/comma optional) -- starts a game with someone you've never played,
 # no curl command needed. Doesn't need a [label] prefix since there's no
@@ -182,6 +183,13 @@ def inbound():
     if not sender:
         return _finish(message_id)
 
+    label, input_text = _extract_label(subject)
+    normalized_input = input_text.strip().lower().rstrip(".!")
+
+    if normalized_input in STATUS_TRIGGERS:
+        _bg(_send_status, sender)
+        return _finish(message_id)
+
     new_game_match = _NEW_GAME_RE.match(subject.strip())
     if new_game_match:
         opponent_email = new_game_match.group(1).strip().lower()
@@ -193,7 +201,6 @@ def inbound():
             base_url)
         return _finish(message_id)
 
-    label, input_text = _extract_label(subject)
     row = store.find_game_for_player(sender, label=label)
 
     # A label pointing at nothing, or at a game that's already finished,
@@ -202,7 +209,6 @@ def inbound():
     # subject still carries an old label. Doesn't apply to rematch/resend,
     # which specifically need to reference a particular (often finished)
     # game by that label, not just "whichever game is live right now".
-    normalized_input = input_text.strip().lower().rstrip(".!")
     targets_a_specific_finished_game = (
         normalized_input in REMATCH_TRIGGERS or normalized_input in RESEND_TRIGGERS
     )
@@ -234,11 +240,11 @@ def inbound():
     opponent_email = row["black_email"] if player == WHITE else row["white_email"]
     board_link = f"{base_url}/board/{row['id']}"
 
-    if game.is_over() and input_text.strip().lower().rstrip(".!") in REMATCH_TRIGGERS:
+    if game.is_over() and normalized_input in REMATCH_TRIGGERS:
         _bg(start_rematch, store, row, base_url)
         return _finish(message_id)
 
-    if input_text.strip().lower().rstrip(".!") in RESEND_TRIGGERS:
+    if normalized_input in RESEND_TRIGGERS:
         _bg(_resend_last_move, row, game, base_url, sender)
         return _finish(message_id)
 
@@ -432,6 +438,36 @@ def _render_perspective(game):
     if game.awaiting == AWAIT_DOUBLE_RESPONSE:
         return other(game.pending_doubler)
     return game.to_move
+
+
+def _send_status(sender):
+    """Every active game this address is part of, one line each, showing
+    who they're playing and exactly what's needed next (reusing the same
+    status_text used elsewhere, so cube situations read the same way
+    here as everywhere else) -- 'your move' games listed first."""
+    lines = []
+    for gid, label in store.list_for_player(sender):
+        row = store.load(gid)
+        if row is None:
+            continue
+        game = row["game"]
+        if game.is_over():
+            continue
+        player = WHITE if sender == row["white_email"] else BLACK
+        opponent_name = row["black_name"] if player == WHITE else row["white_name"]
+        actor = _render_perspective(game)
+        your_move = (actor == player)
+        status = game.status_text(row["white_name"], row["black_name"])
+        lines.append((0 if your_move else 1, label.lower(),
+                      f"[{label}] vs {opponent_name}: {status}"))
+
+    if not lines:
+        body = "You don't have any active games right now."
+    else:
+        lines.sort()
+        n = len(lines)
+        body = f"You have {n} active game{'s' if n != 1 else ''}:\n\n" + "\n".join(l[2] for l in lines)
+    send_text_email(sender, "Your games", body)
 
 
 def _history_lines(row, game, limit=None):
