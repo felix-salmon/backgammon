@@ -107,6 +107,19 @@ class Store:
                       f"-- likely pre-existing duplicate rows from before this existed; "
                       f"check /admin/games to find and remove them: {e}")
 
+    def _connect(self):
+        """Every write goes through this instead of a bare
+        sqlite3.connect(self.path) -- the busy-timeout matters
+        specifically because the reminders background thread does its
+        own writes (marking a reminder as sent) completely independently
+        of any request, so a real inbound webhook occasionally lands at
+        the exact same moment. SQLite's default 5-second wait for a
+        locked database isn't always enough headroom for that to
+        resolve on its own; 20 seconds stays safely under gunicorn's own
+        30-second worker timeout, so a write that's still stuck even
+        after waiting doesn't just trade one failure mode for another."""
+        return sqlite3.connect(self.path, timeout=20)
+
     def create_game(self, label, white_email, black_email, white_name="White", black_name="Black"):
         # normalize case at the point of storage -- inbound sender
         # addresses always arrive lowercased already, so a game created
@@ -121,7 +134,7 @@ class Store:
         suffix = 0
         while True:
             try:
-                with closing(sqlite3.connect(self.path)) as con:
+                with closing(self._connect()) as con:
                     cur = con.execute(
                         "INSERT INTO games (label, white_email, black_email, white_name, black_name, "
                         "state_json, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -146,19 +159,19 @@ class Store:
         """Every (id, label) pair in the database, across every player --
         for admin/diagnostic use (e.g. spotting an accidental duplicate
         label from a race), not anything player-facing."""
-        with closing(sqlite3.connect(self.path)) as con:
+        with closing(self._connect()) as con:
             return con.execute("SELECT id, label FROM games").fetchall()
 
     def delete_game(self, game_id):
         """Permanently remove one game by id. Returns True if a row was
         actually deleted, False if no such game existed."""
-        with closing(sqlite3.connect(self.path)) as con:
+        with closing(self._connect()) as con:
             cur = con.execute("DELETE FROM games WHERE id=?", (game_id,))
             con.commit()
             return cur.rowcount > 0
 
     def load(self, game_id):
-        with closing(sqlite3.connect(self.path)) as con:
+        with closing(self._connect()) as con:
             row = con.execute(
                 "SELECT id, label, white_email, black_email, white_name, black_name, state_json "
                 "FROM games WHERE id=?", (game_id,)
@@ -186,7 +199,7 @@ class Store:
         }
 
     def save(self, game_id, game):
-        with closing(sqlite3.connect(self.path)) as con:
+        with closing(self._connect()) as con:
             con.execute(
                 "UPDATE games SET state_json=?, updated_at=? WHERE id=?",
                 (json.dumps(game.to_dict()), time.time(), game_id),
@@ -200,7 +213,7 @@ class Store:
         a finished game (or no game at all), but the sender clearly only
         has one active game -- e.g. replying to a stale email thread
         whose subject still carries an old, now-finished label."""
-        with closing(sqlite3.connect(self.path)) as con:
+        with closing(self._connect()) as con:
             rows = con.execute(
                 "SELECT id FROM games WHERE white_email=? OR black_email=?", (email, email)
             ).fetchall()
@@ -216,7 +229,7 @@ class Store:
         still in progress, that's the one returned even if other, finished games
         also exist under the same email (e.g. right after a rematch, when the old
         finished game and the new live one both still match by address)."""
-        with closing(sqlite3.connect(self.path)) as con:
+        with closing(self._connect()) as con:
             rows = con.execute(
                 "SELECT id FROM games WHERE white_email=? OR black_email=?", (email, email)
             ).fetchall()
@@ -243,7 +256,7 @@ class Store:
         return None
 
     def list_for_player(self, email):
-        with closing(sqlite3.connect(self.path)) as con:
+        with closing(self._connect()) as con:
             rows = con.execute(
                 "SELECT id, label FROM games WHERE white_email=? OR black_email=?", (email, email)
             ).fetchall()
@@ -253,7 +266,7 @@ class Store:
         """All games (any status) between exactly these two email
         addresses, regardless of which color each played. Used to pick a
         fresh, non-colliding label when starting a rematch."""
-        with closing(sqlite3.connect(self.path)) as con:
+        with closing(self._connect()) as con:
             rows = con.execute(
                 "SELECT id, label FROM games WHERE "
                 "(white_email=? AND black_email=?) OR (white_email=? AND black_email=?)",
@@ -266,7 +279,7 @@ class Store:
         already been fully handled? Doesn't record anything itself; see
         mark_seen, which the caller should call only after successfully
         finishing the work for this message."""
-        with closing(sqlite3.connect(self.path)) as con:
+        with closing(self._connect()) as con:
             row = con.execute(
                 "SELECT 1 FROM processed_messages WHERE message_id=?", (message_id,)
             ).fetchone()
@@ -279,7 +292,7 @@ class Store:
         means a crash between marking and finishing would make a retry
         of a genuinely-lost message look like a harmless duplicate and
         get silently dropped instead of retried."""
-        with closing(sqlite3.connect(self.path)) as con:
+        with closing(self._connect()) as con:
             con.execute(
                 "INSERT OR IGNORE INTO processed_messages (message_id, processed_at) VALUES (?, ?)",
                 (message_id, time.time()),
@@ -294,7 +307,7 @@ class Store:
         senders retry on timeouts/network hiccups as standard practice, so
         every inbound handler needs to tolerate seeing the same event more
         than once -- this is what makes that safe."""
-        with closing(sqlite3.connect(self.path)) as con:
+        with closing(self._connect()) as con:
             cur = con.execute(
                 "INSERT OR IGNORE INTO processed_messages (message_id, processed_at) VALUES (?, ?)",
                 (message_id, time.time()),
@@ -307,7 +320,7 @@ class Store:
         """Records a finished game's outcome for the running tally. Keyed
         uniquely by game_id, so calling this more than once for the same
         game (e.g. from a retried webhook) only records it once."""
-        with closing(sqlite3.connect(self.path)) as con:
+        with closing(self._connect()) as con:
             cur = con.execute(
                 "INSERT OR IGNORE INTO results "
                 "(game_id, winner_email, loser_email, points, multiplier, cube_value, "
@@ -321,7 +334,7 @@ class Store:
     def get_tally(self, email_a, email_b):
         """Aggregate head-to-head record between two players across every
         completed game between them, regardless of label."""
-        with closing(sqlite3.connect(self.path)) as con:
+        with closing(self._connect()) as con:
             rows = con.execute(
                 "SELECT winner_email, loser_email, points FROM results WHERE "
                 "(winner_email=? AND loser_email=?) OR (winner_email=? AND loser_email=?)",
@@ -343,7 +356,7 @@ class Store:
         a reminder has already gone out for this specific waiting period
         (any new activity changes updated_at, which naturally clears the
         way for a fresh reminder next time the game goes quiet again)."""
-        with closing(sqlite3.connect(self.path)) as con:
+        with closing(self._connect()) as con:
             con.row_factory = sqlite3.Row
             rows = con.execute(
                 "SELECT id, label, white_email, black_email, white_name, black_name, "
@@ -353,6 +366,6 @@ class Store:
 
     def mark_reminder_sent(self, game_id, which, updated_at_value):
         col = "reminder_48h_at" if which == "48h" else "reminder_7d_at"
-        with closing(sqlite3.connect(self.path)) as con:
+        with closing(self._connect()) as con:
             con.execute(f"UPDATE games SET {col}=? WHERE id=?", (updated_at_value, game_id))
             con.commit()
