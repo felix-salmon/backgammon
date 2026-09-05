@@ -41,6 +41,18 @@ CREATE TABLE IF NOT EXISTS results (
 );
 """
 
+# Kept separate from SCHEMA above since this one can legitimately fail to
+# apply -- on a database that already has two rows sharing a
+# (white_email, black_email, label) combo from before this existed (e.g.
+# a race between two background rematch/new-game creations), SQLite
+# refuses to build the index. That's fine: the app should still start up
+# and let you find and clean up the duplicate via /admin/games, not
+# crash outright.
+UNIQUE_PAIR_LABEL_INDEX_SQL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_games_pair_label "
+    "ON games(white_email, black_email, label)"
+)
+
 
 class Store:
     """One SQLite file, one row per game.
@@ -87,6 +99,13 @@ class Store:
             if "reminder_7d_at" not in cols:
                 con.execute("ALTER TABLE games ADD COLUMN reminder_7d_at REAL")
             con.commit()
+            try:
+                con.execute(UNIQUE_PAIR_LABEL_INDEX_SQL)
+                con.commit()
+            except sqlite3.Error as e:
+                print(f"[state.py] could not add unique (white_email, black_email, label) index "
+                      f"-- likely pre-existing duplicate rows from before this existed; "
+                      f"check /admin/games to find and remove them: {e}")
 
     def create_game(self, label, white_email, black_email, white_name="White", black_name="Black"):
         # normalize case at the point of storage -- inbound sender
@@ -97,15 +116,46 @@ class Store:
         black_email = black_email.strip().lower()
         game = Game.new()
         now = time.time()
+        state_json = json.dumps(game.to_dict())
+        attempt_label = label
+        suffix = 0
+        while True:
+            try:
+                with closing(sqlite3.connect(self.path)) as con:
+                    cur = con.execute(
+                        "INSERT INTO games (label, white_email, black_email, white_name, black_name, "
+                        "state_json, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                        (attempt_label, white_email, black_email, white_name, black_name,
+                         state_json, now, now),
+                    )
+                    con.commit()
+                    return cur.lastrowid
+            except sqlite3.IntegrityError:
+                # Extremely rare: two near-simultaneous requests (e.g. a
+                # genuine race between two background rematch/new-game
+                # creations) both tried to create the same label for the
+                # same pair. The unique index catches it at the database
+                # level -- retry with a distinguishing suffix rather than
+                # end up with two rows silently sharing one label, which
+                # would confuse every lookup keyed on that label,
+                # including the reminder de-dup logic.
+                suffix += 1
+                attempt_label = f"{label}-{suffix}"
+
+    def list_all_labels(self):
+        """Every (id, label) pair in the database, across every player --
+        for admin/diagnostic use (e.g. spotting an accidental duplicate
+        label from a race), not anything player-facing."""
         with closing(sqlite3.connect(self.path)) as con:
-            cur = con.execute(
-                "INSERT INTO games (label, white_email, black_email, white_name, black_name, "
-                "state_json, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
-                (label, white_email, black_email, white_name, black_name,
-                 json.dumps(game.to_dict()), now, now),
-            )
+            return con.execute("SELECT id, label FROM games").fetchall()
+
+    def delete_game(self, game_id):
+        """Permanently remove one game by id. Returns True if a row was
+        actually deleted, False if no such game existed."""
+        with closing(sqlite3.connect(self.path)) as con:
+            cur = con.execute("DELETE FROM games WHERE id=?", (game_id,))
             con.commit()
-            return cur.lastrowid
+            return cur.rowcount > 0
 
     def load(self, game_id):
         with closing(sqlite3.connect(self.path)) as con:
@@ -116,7 +166,18 @@ class Store:
         if row is None:
             return None
         gid, label, we, be, wn, bn, state_json = row
-        game = Game.from_dict(json.loads(state_json))
+        try:
+            game = Game.from_dict(json.loads(state_json))
+        except Exception as e:
+            # A single corrupted/incompatible game record shouldn't take
+            # down every lookup for every player who happens to share an
+            # email with it -- find_game_for_player and friends load
+            # every candidate game for an address in one pass, so one
+            # bad record here used to be able to 500 every email from
+            # that person, not just requests touching this one game.
+            # Treat it as missing (and log it) rather than crash.
+            print(f"[state.py] failed to load game {game_id} ({label}): {e}")
+            return None
         return {
             "id": gid, "label": label,
             "white_email": we, "black_email": be,

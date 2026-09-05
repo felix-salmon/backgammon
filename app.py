@@ -73,6 +73,51 @@ def _bg(fn, *args, **kwargs):
     threading.Thread(target=wrapper, daemon=True).start()
 
 
+@app.route("/admin/games", methods=["GET"])
+def admin_list_games():
+    """List every game in this deployment's database -- id, label,
+    players, status, last activity. Useful for spotting problems (like
+    two rows accidentally sharing a label) that aren't visible from any
+    single player's view.
+
+    curl example:
+        curl https://yourhost/admin/games -H "X-Admin-Token: $ADMIN_TOKEN"
+    """
+    if not ADMIN_TOKEN or request.headers.get("X-Admin-Token") != ADMIN_TOKEN:
+        return ("forbidden", 403)
+    out = []
+    for row_id, label in store.list_all_labels():
+        row = store.load(row_id)
+        if row is None:
+            out.append({"id": row_id, "label": label, "error": "failed to load"})
+            continue
+        out.append({
+            "id": row["id"], "label": row["label"],
+            "white": f"{row['white_name']} <{row['white_email']}>",
+            "black": f"{row['black_name']} <{row['black_email']}>",
+            "is_over": row["game"].is_over(),
+        })
+    return (out, 200)
+
+
+@app.route("/admin/delete_game/<int:game_id>", methods=["POST"])
+def admin_delete_game(game_id):
+    """Permanently remove one game by id -- for cleaning up an
+    accidental duplicate (e.g. a race that created two rows with the
+    same label). Does not touch the running tally.
+
+    curl example:
+        curl -X POST https://yourhost/admin/delete_game/7 \\
+          -H "X-Admin-Token: $ADMIN_TOKEN"
+    """
+    if not ADMIN_TOKEN or request.headers.get("X-Admin-Token") != ADMIN_TOKEN:
+        return ("forbidden", 403)
+    deleted = store.delete_game(game_id)
+    if not deleted:
+        return ("no such game", 404)
+    return ("", 204)
+
+
 @app.route("/admin/start_game", methods=["POST"])
 def admin_start_game():
     """Create a new game against THIS deployment's database and email the
@@ -447,19 +492,25 @@ def _send_status(sender):
     here as everywhere else) -- 'your move' games listed first."""
     lines = []
     for gid, label in store.list_for_player(sender):
-        row = store.load(gid)
-        if row is None:
+        try:
+            row = store.load(gid)
+            if row is None:
+                continue
+            game = row["game"]
+            if game.is_over():
+                continue
+            player = WHITE if sender == row["white_email"] else BLACK
+            opponent_name = row["black_name"] if player == WHITE else row["white_name"]
+            actor = _render_perspective(game)
+            your_move = (actor == player)
+            status = game.status_text(row["white_name"], row["black_name"])
+            lines.append((0 if your_move else 1, label.lower(),
+                          f"[{label}] vs {opponent_name}: {status}"))
+        except Exception as e:
+            # One unusual game shouldn't block the whole summary -- skip
+            # it and still report everything else that's fine.
+            print(f"[status error] game {gid} ({label}): {e}")
             continue
-        game = row["game"]
-        if game.is_over():
-            continue
-        player = WHITE if sender == row["white_email"] else BLACK
-        opponent_name = row["black_name"] if player == WHITE else row["white_name"]
-        actor = _render_perspective(game)
-        your_move = (actor == player)
-        status = game.status_text(row["white_name"], row["black_name"])
-        lines.append((0 if your_move else 1, label.lower(),
-                      f"[{label}] vs {opponent_name}: {status}"))
 
     if not lines:
         body = "You don't have any active games right now."
