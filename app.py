@@ -452,8 +452,23 @@ def _notify_both(row, game, message, result, base_url=None, sender_player=None, 
             status_text=game.status_text(row["white_name"], row["black_name"]),
         )
         subj = f"[{row['label']}] {_subject_summary(game, result, row)}"
+
+        # A plain string result (manual/auto/greedy) is a personal setting
+        # change, not something the opponent needs to hear about -- UNLESS
+        # it also caused something to actually play out (e.g. turning
+        # greedy on with dice already sitting there plays that turn
+        # immediately, which genuinely can pass the turn to the opponent
+        # and they do need to know). game.last_auto_played is empty for a
+        # pure settings change and non-empty whenever anything actually
+        # got played as a result, so it's exactly the right signal here.
+        pure_settings_change = isinstance(result, str) and not game.last_auto_played
+        if pure_settings_change and sender_player is not None:
+            recipients = [row["white_email"] if sender_player == WHITE else row["black_email"]]
+        else:
+            recipients = [row["white_email"], row["black_email"]]
+
         send_board_email(
-            [row["white_email"], row["black_email"]], subj, png_path,
+            recipients, subj, png_path,
             summary_lines=summary_lines, sender_name=sender_name,
             message_text=message, quoted_text=quoted_text,
             history_lines=_history_lines(row, game, limit=6),

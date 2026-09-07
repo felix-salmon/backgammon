@@ -40,11 +40,17 @@ rather than making you type out a move you had no real choice about.
 
 GREEDY
 ------
-Sending "greedy" instead of a move plays the current dice for you, always
-moving (or bearing off) the most-advanced checker with each die. It's
-meant for pure bear-off races once contact is impossible -- it applies no
-judgment about safety, so don't reach for it while there's still a blot
-either of you could hit.
+Sending "greedy" toggles greedy mode on/off for that player -- same shape
+as manual/auto, not a one-shot action. While it's on, every one of that
+player's turns plays automatically, always moving (or bearing off) the
+most-advanced checker with each die, until they send "greedy" again to
+turn it off. Turning it on with dice already sitting there plays that
+turn immediately too. Meant for pure bear-off races once contact is
+impossible -- it applies no judgment about safety, so don't turn it on
+while there's still a blot either side could hit, and remember to turn
+it back off if the position changes. If both players have it on, a race
+can cascade through both sides' turns all the way to a finish in one go,
+via the same auto_resolve loop that already handles forced moves.
 
 MAXIMAL PLAY
 ------------
@@ -123,6 +129,7 @@ class Game:
     cube_value: int = 1
     cube_owner: Optional[str] = None   # None = centered, else only this player may double next
     auto_dice: dict = field(default_factory=lambda: {WHITE: True, BLACK: True})
+    greedy_mode: dict = field(default_factory=lambda: {WHITE: False, BLACK: False})
     awaiting: str = AWAIT_MOVE
     pending_doubler: Optional[str] = None
     pending_cube_value: Optional[int] = None
@@ -154,6 +161,7 @@ class Game:
             "cube_value": self.cube_value,
             "cube_owner": self.cube_owner,
             "auto_dice": dict(self.auto_dice),
+            "greedy_mode": dict(self.greedy_mode),
             "awaiting": self.awaiting,
             "pending_doubler": self.pending_doubler,
             "pending_cube_value": self.pending_cube_value,
@@ -182,6 +190,8 @@ class Game:
             cube_value=d.get("cube_value", 1),
             cube_owner=d.get("cube_owner"),
             auto_dice=auto_dice,
+            greedy_mode={WHITE: d.get("greedy_mode", {}).get(WHITE, False),
+                         BLACK: d.get("greedy_mode", {}).get(BLACK, False)},
             awaiting=d.get("awaiting", AWAIT_MOVE),
             pending_doubler=d.get("pending_doubler"),
             pending_cube_value=d.get("pending_cube_value"),
@@ -462,34 +472,41 @@ class Game:
     def _cmd_greedy(self, player, message):
         if self.is_over():
             raise CommandError("the game is already over")
-        if player != self.to_move:
-            raise IllegalMove("it isn't your turn")
-        if self.awaiting == AWAIT_ROLL_OR_DOUBLE:
-            raise IllegalMove("you need to 'roll' or 'double' before playing a move")
-        if self.awaiting == AWAIT_DOUBLE_RESPONSE:
-            raise IllegalMove("there's a double pending -- reply 'take' or 'drop' first")
-
-        hops = _greedy_hops(self.board, player, self.dice)
-        if not hops:
-            raise IllegalMove("no legal moves available")
-        return self._commit_hops(player, hops, message or "(greedy)")
+        self.greedy_mode[player] = not self.greedy_mode.get(player, False)
+        if not self.greedy_mode[player]:
+            return "Turned off greedy mode -- you'll need to send your own moves again."
+        note = (
+            "Turned on greedy mode -- every one of your turns will be played "
+            "automatically (always advancing your most-advanced checker) until "
+            "you send 'greedy' again to turn it off. Only use this once contact "
+            "is impossible; it makes no attempt at safety and will happily "
+            "leave a blot."
+        )
+        return note
 
     # ---------- forced-move automation ----------
 
     def auto_resolve(self):
         """Repeatedly check whether the player now on roll has a forced
-        move (or no legal move at all) and play it automatically, looping
-        in case that chains into the next player also being forced. Stops
-        as soon as a turn requires an actual decision, or the game ends.
-        Returns the list of TurnRecords that were auto-played.
+        move (or no legal move at all), or has greedy mode turned on, and
+        play it automatically -- looping in case that chains into the
+        next player also being forced or also on greedy (a race with
+        both sides on greedy can play itself out to the end in one go).
+        Stops as soon as a turn requires an actual decision, or the game
+        ends. Returns the list of TurnRecords that were auto-played.
         """
         auto = []
         while not self.is_over() and self.awaiting == AWAIT_MOVE:
             forced, hops = _is_forced(self.board, self.to_move, self.dice)
-            if not forced:
-                break
-            note = "(forced)" if hops else "(no legal move)"
-            auto.append(self._commit_hops(self.to_move, hops, note))
+            if forced:
+                note = "(forced)" if hops else "(no legal move)"
+                auto.append(self._commit_hops(self.to_move, hops, note))
+                continue
+            if self.greedy_mode.get(self.to_move, False):
+                hops = _greedy_hops(self.board, self.to_move, self.dice)
+                auto.append(self._commit_hops(self.to_move, hops, "(greedy)"))
+                continue
+            break
         return auto
 
     def _commit_hops(self, player, hops, message):
@@ -853,10 +870,27 @@ def _greedy_hops(board, player, dice):
     maximal options, prefers the one that moves the most-advanced
     checkers earliest, matching the old heuristic's spirit as a
     tie-break rather than as the primary strategy. Meant for pure races;
-    makes no attempt at safety."""
+    makes no attempt at safety.
+
+    Also respects the higher-die tie-break rule (if only one die can be
+    played at all, and more than one distinct value was independently
+    playable, the larger one is mandatory) -- greedy doesn't share any
+    code path with apply_turn, which is where that rule is normally
+    enforced for a typed-out move, so it needs its own check here."""
     maximal = _enumerate_full_turns(board, player, dice)
     if not maximal:
         return []
+
+    dice_vals = set(dice_multiset(dice))
+    playable_values = {d for d in dice_vals if _legal_hops_for_die(board, player, d)}
+    max_playable = max(playable_values) if playable_values else None
+
+    def violates_higher_die(hops):
+        return (len(hops) == 1 and max_playable is not None
+                and hops[0][2] < max_playable)
+
+    compliant = [c for c in maximal if not violates_higher_die(c[0])]
+    candidates = compliant if compliant else maximal
 
     def score(candidate):
         hops, _ = candidate
@@ -864,5 +898,5 @@ def _greedy_hops(board, player, dice):
         # highest points first -- bar counts as "furthest out" of all.
         return tuple(-(999 if src == "bar" else src) for src, dest, die in hops)
 
-    hops, _ = min(maximal, key=score)
+    hops, _ = min(candidates, key=score)
     return hops

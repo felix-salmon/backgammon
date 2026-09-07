@@ -42,9 +42,10 @@ def create_and_announce(store, label, white_email, white_name, black_email, blac
             "Point numbers are always exactly what's printed on the board picture, "
             "for either color.",
             f"Send '[{label}] manual' any time to unlock the doubling cube, or "
-            f"'[{label}] greedy' to auto-play a pure race -- forced moves play "
-            f"themselves automatically. Once this game finishes, reply 'rematch' "
-            f"to start a fresh one against the same opponent.",
+            f"'[{label}] greedy' to turn on auto-play for a pure race (send it again "
+            f"to turn off) -- forced moves play themselves automatically either way. "
+            f"Once this game finishes, reply 'rematch' to start a fresh one against "
+            f"the same opponent.",
         ]
         footer_lines = [f"Current board: {base_url}/board/{gid}"] if base_url else []
         tally = store.get_tally(white_email, black_email)

@@ -14,8 +14,9 @@ Commands you can type at the move prompt, in addition to move notation:
     take      -- accept a pending double
     drop      -- decline a pending double (concede at the current cube value)
     resign    -- concede the game outright
-    greedy    -- (once dice are rolled) auto-play them, always moving the
-                 most-advanced checker -- for pure bear-off races only
+    greedy    -- toggle greedy mode on/off for yourself (like manual/auto) --
+                 while on, every one of your turns auto-plays, always moving
+                 the most-advanced checker -- for pure bear-off races only
 
 Forced moves (only one legal way to play the dice, or none at all) are
 played automatically and shown tagged '(forced)' or '(no legal move)'.
