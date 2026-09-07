@@ -264,16 +264,18 @@ def inbound():
 
     if row is None:
         matches = store.list_for_player(sender)
+        active_matches = [(gid, lbl) for gid, lbl in matches
+                           if (r := store.load(gid)) is not None and not r["game"].is_over()]
         if label:
             _bg(send_text_email, sender, "No game found",
                 f"I couldn't find a game of yours labeled '[{label}]'.")
-        elif len(matches) > 1:
-            labels = ", ".join(f"[{lbl}]" for _, lbl in matches)
-            links = "\n".join(f"[{lbl}]: {base_url}/board/{gid}" for gid, lbl in matches)
+        elif len(active_matches) > 1:
+            labels = ", ".join(f"[{lbl}]" for _, lbl in active_matches)
+            links = "\n".join(f"[{lbl}]: {base_url}/board/{gid}" for gid, lbl in active_matches)
             _bg(send_text_email, sender, "Which game?",
                 f"You have more than one game going ({labels}). "
                 f"Put the game label at the start of your subject, e.g. "
-                f"'[{matches[0][1]}] 24/18 13/11'.\n\n{links}")
+                f"'[{active_matches[0][1]}] 24/18 13/11'.\n\n{links}")
         else:
             _bg(send_text_email, sender, "No game found",
                 "I couldn't find a backgammon game with this address on it.")

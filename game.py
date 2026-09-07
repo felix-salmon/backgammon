@@ -357,7 +357,9 @@ class Game:
         if self.is_over():
             raise CommandError("the game is already over")
         if not self.auto_dice.get(player, True):
-            return "You're already in manual dice mode."
+            # already manual -- sending it again toggles back to auto,
+            # rather than just repeating "you're already in manual mode"
+            return self._cmd_auto(player)
         self.auto_dice[player] = False
         return ("Switched you to manual dice mode -- on your turns, reply 'roll' to "
                 "roll, or 'double' to offer a double. This doesn't affect your "
@@ -367,7 +369,9 @@ class Game:
         if self.is_over():
             raise CommandError("the game is already over")
         if self.auto_dice.get(player, True):
-            return "You're already in automatic dice mode."
+            # already auto -- sending it again toggles to manual, for the
+            # same reason as _cmd_manual above
+            return self._cmd_manual(player)
         self.auto_dice[player] = True
         note = "Switched you to automatic dice mode."
         if self.to_move == player and self.awaiting == AWAIT_ROLL_OR_DOUBLE:
