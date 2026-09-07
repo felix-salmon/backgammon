@@ -194,10 +194,11 @@ def board_image(game_id):
 def _finish(message_id):
     """Every exit point from inbound() should go through this -- marks
     the webhook delivery as fully handled only once we've actually
-    finished handling it (see Store.mark_seen for why that ordering
-    matters), then returns the standard empty-204 webhook response."""
+    finished handling it (see Store.claim_message/finish_message for
+    why that ordering matters), then returns the standard empty-204
+    webhook response."""
     if message_id:
-        store.mark_seen(message_id)
+        store.finish_message(message_id)
     return ("", 204)
 
 
@@ -208,13 +209,14 @@ def inbound():
     # Webhook senders retry on timeouts and network hiccups as standard
     # practice -- ImprovMX includes a stable message-id we can use to make
     # sure a retried delivery of the same email is a harmless no-op rather
-    # than re-applying (or wrongly rejecting) the same move twice. This is
-    # a read-only check: the message is only marked as actually handled
-    # (via _finish, below) once we've finished processing it, so a crash
-    # partway through leaves it eligible for a real retry instead of
-    # being silently treated as already-done.
+    # than re-applying (or wrongly rejecting) the same move twice, or (see
+    # Store.claim_message) running the same work twice concurrently if a
+    # retry arrives before the first attempt finishes. claim_message is
+    # atomic: only one caller can ever win it for a given message_id, no
+    # matter how close together they arrive. If we don't win it, someone
+    # else is already handling (or already handled) this exact message.
     message_id = payload.get("message-id")
-    if message_id and store.is_seen(message_id):
+    if message_id and not store.claim_message(message_id):
         return ("", 204)
 
     # request is only valid inside this handler -- background threads

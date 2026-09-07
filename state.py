@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS games (
 );
 CREATE TABLE IF NOT EXISTS processed_messages (
     message_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'done',
     processed_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS results (
@@ -98,6 +99,14 @@ class Store:
                 con.execute("ALTER TABLE games ADD COLUMN reminder_48h_at REAL")
             if "reminder_7d_at" not in cols:
                 con.execute("ALTER TABLE games ADD COLUMN reminder_7d_at REAL")
+            # same idea for processed_messages -- a pre-existing table
+            # from before the pending/done claim system existed just
+            # gets the new column added; every row already there
+            # represents a message that was, under the old scheme,
+            # already fully handled, so 'done' is the correct default.
+            msg_cols = {r[1] for r in con.execute("PRAGMA table_info(processed_messages)").fetchall()}
+            if "status" not in msg_cols:
+                con.execute("ALTER TABLE processed_messages ADD COLUMN status TEXT NOT NULL DEFAULT 'done'")
             con.commit()
             try:
                 con.execute(UNIQUE_PAIR_LABEL_INDEX_SQL)
@@ -274,46 +283,68 @@ class Store:
             ).fetchall()
         return rows
 
-    def is_seen(self, message_id):
-        """Read-only idempotency check -- has this webhook delivery
-        already been fully handled? Doesn't record anything itself; see
-        mark_seen, which the caller should call only after successfully
-        finishing the work for this message."""
-        with closing(self._connect()) as con:
-            row = con.execute(
-                "SELECT 1 FROM processed_messages WHERE message_id=?", (message_id,)
-            ).fetchone()
-        return row is not None
+    def claim_message(self, message_id, pending_ttl=60):
+        """Atomically try to claim this message_id for processing.
+        Returns True if this call should be the one to actually do the
+        work, False if someone else already has.
 
-    def mark_seen(self, message_id):
-        """Record a webhook delivery as fully handled. Call this only
-        once the corresponding work (applying a move, sending a reply,
-        etc.) has actually completed -- marking it seen any earlier
-        means a crash between marking and finishing would make a retry
-        of a genuinely-lost message look like a harmless duplicate and
-        get silently dropped instead of retried."""
+        This matters specifically because 'check if seen, then do the
+        work, then mark seen' -- as two separate steps -- has a race: if
+        the same message is delivered more than once in close
+        succession (webhook retries aren't the only way this happens),
+        multiple deliveries can all pass the 'have I seen this?' check
+        before any of them finishes marking it seen, and all of them
+        proceed to do the work independently. The INSERT below is a
+        single atomic operation instead, so only one caller can ever
+        win it, no matter how close together they arrive.
+
+        A claim starts as 'pending' and only becomes 'done' once
+        finish_message is called after the work actually completes. A
+        'pending' claim older than pending_ttl seconds is assumed to
+        belong to an attempt that crashed before finishing (since our
+        synchronous work per request is normally quick -- anything slow
+        like sending mail is backgrounded), and gets taken over rather
+        than silently blocking forever."""
+        now = time.time()
+        with closing(self._connect()) as con:
+            try:
+                con.execute(
+                    "INSERT INTO processed_messages (message_id, status, processed_at) "
+                    "VALUES (?, 'pending', ?)",
+                    (message_id, now),
+                )
+                con.commit()
+                return True
+            except sqlite3.IntegrityError:
+                pass
+            row = con.execute(
+                "SELECT status, processed_at FROM processed_messages WHERE message_id=?",
+                (message_id,),
+            ).fetchone()
+            if row is None:
+                return True  # shouldn't happen, but don't block forever over it
+            status, processed_at = row
+            if status == "done":
+                return False
+            if now - processed_at > pending_ttl:
+                con.execute(
+                    "UPDATE processed_messages SET processed_at=? WHERE message_id=?",
+                    (now, message_id),
+                )
+                con.commit()
+                return True
+            return False
+
+    def finish_message(self, message_id):
+        """Mark a claimed message as fully handled. Call this only once
+        the corresponding work (applying a move, sending a reply, etc.)
+        has actually completed."""
         with closing(self._connect()) as con:
             con.execute(
-                "INSERT OR IGNORE INTO processed_messages (message_id, processed_at) VALUES (?, ?)",
-                (message_id, time.time()),
+                "UPDATE processed_messages SET status='done' WHERE message_id=?",
+                (message_id,),
             )
             con.commit()
-
-    def seen_message(self, message_id):
-        """Idempotency check for webhook deliveries. Returns True if this
-        message_id has already been processed (in which case the caller
-        should treat this delivery as a harmless duplicate and do nothing
-        further); records it and returns False the first time. Webhook
-        senders retry on timeouts/network hiccups as standard practice, so
-        every inbound handler needs to tolerate seeing the same event more
-        than once -- this is what makes that safe."""
-        with closing(self._connect()) as con:
-            cur = con.execute(
-                "INSERT OR IGNORE INTO processed_messages (message_id, processed_at) VALUES (?, ?)",
-                (message_id, time.time()),
-            )
-            con.commit()
-            return cur.rowcount == 0
 
     def record_result(self, game_id, winner_email, loser_email, points, multiplier,
                        cube_value, win_reason):
