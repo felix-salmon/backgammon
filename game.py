@@ -524,7 +524,14 @@ class Game:
 
     def _start_turn(self, player):
         self.to_move = player
-        if self.auto_dice.get(player, True):
+        # Manual mode exists to offer a real choice between rolling and
+        # doubling -- but that choice only exists if this player is
+        # actually allowed to double right now (cube centered, or they
+        # already own it). If their opponent owns the cube, doubling
+        # isn't legal for them at all, so there's nothing to manually
+        # decide; just roll, regardless of their own manual/auto setting.
+        can_double = self.cube_owner is None or self.cube_owner == player
+        if self.auto_dice.get(player, True) or not can_double:
             self.dice = roll_dice()
             self.awaiting = AWAIT_MOVE
         else:
