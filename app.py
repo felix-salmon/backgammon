@@ -414,6 +414,8 @@ def _notify_both(row, game, message, result, base_url=None, sender_player=None, 
         who = row["white_name"] if auto.player == WHITE else row["black_name"]
         if auto.move_text == "(no legal move)":
             summary_lines.append(f"{who} had no legal move.")
+        elif auto.message == "(greedy)":
+            summary_lines.append(f"{who} (on greedy) played {auto.move_text}.")
         else:
             summary_lines.append(f"{who} was forced: {auto.move_text}.")
 

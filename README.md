@@ -133,20 +133,21 @@ you'll see it show up tagged `(forced)` or `(no legal move)`. This can
 chain through several turns in a row if both of you keep getting forced
 positions (common in a tight bear-off race).
 
-Send **`greedy`** to turn on greedy mode for yourself -- from then on,
-every one of your turns plays automatically (preferring to advance your
-most-advanced checkers first), no move needed from you, until you send
-`greedy` again to turn it back off. It's a persistent toggle, the same
-shape as `manual`/`auto` -- not a one-time "just play this roll" action.
-Meant for pure races once no contact is possible; it has no notion of
-safety, so don't turn it on while there's still a blot in play, and
-remember to turn it off again if the position changes. If both of you
-have it on, a race can play itself out to the finish in one go, chaining
-through both sides' turns automatically. Either way, it always plays a
-fully maximal sequence (same rule as a normal move -- see below), never
-leaving a die stranded just because the simple "biggest checker, biggest
-die" heuristic happened to block itself, and it respects the higher-die
-tie-break rule too.
+Send **`greedy`** to turn on greedy mode for yourself -- a persistent
+toggle, same shape as `manual`/`auto`, not a one-time "just play this
+roll" action. It's specifically for the bear-off phase: it only ever
+does anything once every one of your checkers is home, and even then,
+only on a turn where there's a single, unambiguous way to bear off the
+maximum number of checkers that roll allows -- e.g. with checkers on
+every point 1 through 6 and a roll of 4-3, it bears off the 4-point and
+3-point checkers automatically, since that's clearly the only way to
+get two off. If turning it on with dice already sitting there qualifies,
+it plays immediately; otherwise it just sits idle -- through the rest of
+the race, through every future turn -- until the first roll where it
+actually applies, with no need to send it again. The moment there's a
+genuine choice (which checkers to bear off, or any real decision at
+all), it stops and leaves that turn for you, rather than guessing.
+Send `greedy` again any time to turn it back off.
 
 ## Running tally
 

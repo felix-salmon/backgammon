@@ -41,16 +41,17 @@ rather than making you type out a move you had no real choice about.
 GREEDY
 ------
 Sending "greedy" toggles greedy mode on/off for that player -- same shape
-as manual/auto, not a one-shot action. While it's on, every one of that
-player's turns plays automatically, always moving (or bearing off) the
-most-advanced checker with each die, until they send "greedy" again to
-turn it off. Turning it on with dice already sitting there plays that
-turn immediately too. Meant for pure bear-off races once contact is
-impossible -- it applies no judgment about safety, so don't turn it on
-while there's still a blot either side could hit, and remember to turn
-it back off if the position changes. If both players have it on, a race
-can cascade through both sides' turns all the way to a finish in one go,
-via the same auto_resolve loop that already handles forced moves.
+as manual/auto, a persistent setting, not a one-shot action. It only ever
+does anything once that player is all home (bear-off phase), and even
+then only on a turn where a single, unambiguous choice maximizes how many
+checkers come off this roll -- e.g. checkers on every point 1-6 with a
+4-3 roll bears off the 4 and 3 checkers, since nothing else gets two off.
+Any turn with a genuine choice (which checkers to bear off, or anything
+else requiring judgment) is left for the player instead of guessed at.
+Turning it on with dice already sitting there plays immediately if that
+turn qualifies; otherwise it just sits idle -- through the rest of the
+race if needed -- until the first roll it actually applies to, via the
+same auto_resolve loop that already handles forced moves.
 
 MAXIMAL PLAY
 ------------
@@ -504,8 +505,9 @@ class Game:
                 continue
             if self.greedy_mode.get(self.to_move, False):
                 hops = _greedy_hops(self.board, self.to_move, self.dice)
-                auto.append(self._commit_hops(self.to_move, hops, "(greedy)"))
-                continue
+                if hops is not None:
+                    auto.append(self._commit_hops(self.to_move, hops, "(greedy)"))
+                    continue
             break
         return auto
 
@@ -861,25 +863,26 @@ def _is_forced(board, player, dice):
 
 
 def _greedy_hops(board, player, dice):
-    """A maximal-length sequence of hops for this dice roll -- picked
-    from the same full search _enumerate_full_turns uses for forced
-    moves, so it can never strand a die the way a purely local
-    largest-die-first heuristic can (moving the most-advanced checker
-    first sometimes blocks the other die from having anywhere legal to
-    go, even though a different choice would have used both). Among the
-    maximal options, prefers the one that moves the most-advanced
-    checkers earliest, matching the old heuristic's spirit as a
-    tie-break rather than as the primary strategy. Meant for pure races;
-    makes no attempt at safety.
+    """Bear-off-only auto-play. Only ever applies once every one of the
+    player's checkers is home (returns None otherwise, so greedy mode
+    simply sits idle until the bear-off phase actually starts). Finds
+    the maximum number of checkers that can be borne off this turn
+    (respecting the same maximal-dice-usage and higher-die tie-break
+    rules a normal typed move must follow), and returns hops for it
+    ONLY if that maximum is reached by a single, unambiguous resulting
+    position. If there's more than one genuinely different way to reach
+    that same maximum bear-off count -- a real choice about WHICH
+    checkers to bear off, or what to do with the rest of the roll --
+    this returns None instead of guessing, and the turn is left for the
+    player to decide. A true dance (no legal play at all) never reaches
+    this function -- auto_resolve's forced-move check runs first and
+    already handles that case."""
+    if not board.all_home(player):
+        return None
 
-    Also respects the higher-die tie-break rule (if only one die can be
-    played at all, and more than one distinct value was independently
-    playable, the larger one is mandatory) -- greedy doesn't share any
-    code path with apply_turn, which is where that rule is normally
-    enforced for a typed-out move, so it needs its own check here."""
     maximal = _enumerate_full_turns(board, player, dice)
     if not maximal:
-        return []
+        return None
 
     dice_vals = set(dice_multiset(dice))
     playable_values = {d for d in dice_vals if _legal_hops_for_die(board, player, d)}
@@ -892,11 +895,16 @@ def _greedy_hops(board, player, dice):
     compliant = [c for c in maximal if not violates_higher_die(c[0])]
     candidates = compliant if compliant else maximal
 
-    def score(candidate):
-        hops, _ = candidate
-        # Sort key: prefer hops (in order played) starting from the
-        # highest points first -- bar counts as "furthest out" of all.
-        return tuple(-(999 if src == "bar" else src) for src, dest, die in hops)
+    def borne_off_count(hops):
+        return sum(1 for _, dest, _ in hops if dest == "off")
 
-    hops, _ = min(candidates, key=score)
-    return hops
+    max_off = max(borne_off_count(hops) for hops, _ in candidates)
+    best = [(hops, b) for hops, b in candidates if borne_off_count(hops) == max_off]
+
+    distinct = {}
+    for hops, b in best:
+        distinct[_board_key(b)] = hops
+    if len(distinct) == 1:
+        return next(iter(distinct.values()))
+    return None
+
