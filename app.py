@@ -32,7 +32,8 @@ from render import save_board_png
 from state import Store
 import reminders
 from email_io import parse_inbound_improvmx, send_board_email, send_text_email
-from admin import create_and_announce, start_rematch, REMATCH_TRIGGERS, _first_available_label
+from admin import (create_and_announce, start_rematch, REMATCH_TRIGGERS,
+                   _first_available_label, format_tally_line)
 from board import WHITE, BLACK, other
 
 DB_PATH = os.environ.get("BACKGAMMON_DB", "backgammon.db")
@@ -360,10 +361,7 @@ def _resend_last_move(row, game, base_url, requester_email):
         tally = store.get_tally(row["white_email"], row["black_email"])
         wn, bn = row["white_name"], row["black_name"]
         we, be = row["white_email"], row["black_email"]
-        summary_lines.append(
-            f"Head-to-head: {wn} {tally['wins'].get(we, 0)}-{tally['wins'].get(be, 0)} {bn} "
-            f"in games, {tally['points'].get(we, 0)}-{tally['points'].get(be, 0)} in points."
-        )
+        summary_lines.append(format_tally_line(tally, wn, we, bn, be))
 
     with tempfile.TemporaryDirectory() as tmp:
         png_path = os.path.join(tmp, "board.png")
@@ -430,10 +428,7 @@ def _notify_both(row, game, message, result, base_url=None, sender_player=None, 
         tally = store.get_tally(row["white_email"], row["black_email"])
         wn, bn = row["white_name"], row["black_name"]
         we, be = row["white_email"], row["black_email"]
-        summary_lines.append(
-            f"Head-to-head: {wn} {tally['wins'].get(we, 0)}-{tally['wins'].get(be, 0)} {bn} "
-            f"in games, {tally['points'].get(we, 0)}-{tally['points'].get(be, 0)} in points."
-        )
+        summary_lines.append(format_tally_line(tally, wn, we, bn, be))
 
     if base_url:
         footer_lines.append(f"Current board: {base_url}/board/{row['id']}")

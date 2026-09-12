@@ -16,6 +16,26 @@ from email_io import send_board_email
 REMATCH_TRIGGERS = {"rematch", "new game", "again", "play again", "new"}
 
 
+def format_tally_line(tally, name_a, email_a, name_b, email_b):
+    """The one-line head-to-head summary shown at the end of a game and
+    at the start of a rematch -- shared so both spots (and app.py's own
+    game-over notification) stay in sync rather than drifting apart as
+    separate copies of the same formatting."""
+    wins_a = tally["wins"].get(email_a, 0)
+    wins_b = tally["wins"].get(email_b, 0)
+    pts_a = tally["points"].get(email_a, 0)
+    pts_b = tally["points"].get(email_b, 0)
+    diff = pts_a - pts_b
+    if diff > 0:
+        net = f"{name_a} +{diff}"
+    elif diff < 0:
+        net = f"{name_b} +{-diff}"
+    else:
+        net = "tied"
+    return (f"Head-to-head: {name_a} {wins_a}-{wins_b} {name_b} in games, "
+            f"{pts_a}-{pts_b} in points ({net}).")
+
+
 def create_and_announce(store, label, white_email, white_name, black_email, black_name,
                          base_url=None):
     gid = store.create_game(label, white_email, black_email, white_name, black_name)
@@ -51,11 +71,7 @@ def create_and_announce(store, label, white_email, white_name, black_email, blac
         footer_lines = [f"Current board: {base_url}/board/{gid}"] if base_url else []
         tally = store.get_tally(white_email, black_email)
         if tally["games_played"] > 0:
-            footer_lines.append(
-                f"Head-to-head: {white_name} {tally['wins'].get(white_email, 0)}-"
-                f"{tally['wins'].get(black_email, 0)} {black_name} in games, "
-                f"{tally['points'].get(white_email, 0)}-{tally['points'].get(black_email, 0)} in points."
-            )
+            footer_lines.append(format_tally_line(tally, white_name, white_email, black_name, black_email))
         send_board_email(
             [white_email, black_email], subj, png_path,
             summary_lines=summary_lines, footer_lines=footer_lines,

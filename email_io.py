@@ -44,6 +44,107 @@ _QUOTE_MARKERS = [
     re.compile(r"^_{5,}\s*$", re.MULTILINE),                  # Outlook separator
 ]
 
+# Once text is past the split point above, it's the OLD thread contents --
+# which, in this app, is mostly copies of our OWN previous emails (move
+# confirmations, recent-moves lists, instructions, tally lines, and so
+# on), not things a human actually wrote. Rather than show all of that
+# back to whoever's reading, these patterns recognize every line format
+# this codebase itself generates and strip them out, leaving only actual
+# player-written text. Deliberately blacklist-based: human text can say
+# anything, but our own output is a small, fixed set of templates we
+# control, so recognizing those is far more reliable than guessing at
+# what "looks human." If a new outbound message format is added
+# elsewhere in the app, add its pattern here too.
+_BOT_LINE_PATTERNS = [
+    # game.py status_text() / app.py summary_lines outcomes
+    re.compile(r"^.+ wins \d+ point\(s\)(?: \(gammon\)| \(backgammon\))?!$"),
+    re.compile(r"^.+ offers to double to \d+\. .+: reply 'take' or 'drop'\.$"),
+    re.compile(r"^.+'s turn: reply 'roll' or 'double'\.$"),
+    re.compile(r"^.+ to play \d+-\d+\.$"),
+    re.compile(r"^.+ played .+\.$"),
+    re.compile(r"^Hit on: .+\.$"),
+    re.compile(r"^.+ takes the double -- cube is now at \d+\.$"),
+    re.compile(r"^.+ drops\.$"),
+    re.compile(r"^.+ resigns\.$"),
+    re.compile(r"^.+ had no legal move\.$"),
+    re.compile(r"^.+ \(on greedy\) played .+\.$"),
+    re.compile(r"^.+ was forced: .+\.$"),
+    re.compile(r"^Head-to-head: .+ in games, .+ in points \(.+\)\.$"),
+    re.compile(r"^New game started between .+ and .+\.$"),
+    re.compile(r"^.+ rolled \d+-\d+ and plays first\.$"),
+    # manual/auto/greedy toggle confirmations
+    re.compile(r"^Switched you to (manual|automatic) dice mode\b.*$"),
+    re.compile(r"^Turned (on|off) greedy mode\b.*$"),
+    # move-history lines ("N. Name rolled X-Y: ..." / "N. Name: action")
+    re.compile(r"^Recent moves:$"),
+    re.compile(r"^\d+\. .+ rolled \d+-\d+: .+$"),
+    re.compile(r"^\d+\. [^:]+: .+$"),
+    # footer / meta
+    re.compile(r"^Current board: https?://\S+$"),
+    re.compile(r"^\(quoted from earlier in the thread\)$"),
+    re.compile(r"^\[board image attached\]$"),
+    # onboarding / instructional text (new-game and rematch announcements)
+    re.compile(r"^Reply with your move in the subject line\b.*$"),
+    re.compile(r"^Point numbers are always exactly what's printed\b.*$"),
+    re.compile(r"^Send '\[.+\] manual'.*$"),
+    re.compile(r"^Once this game finishes, reply 'rematch'.*$"),
+    # no-game / which-game / not-so-fast / still-waiting / status listing
+    re.compile(r"^I couldn't find a game of yours labeled .+\.$"),
+    re.compile(r"^I couldn't find a backgammon game with this address on it\.$"),
+    re.compile(r"^You have more than one game going \(.+\)\. Put the game label\b.*$"),
+    re.compile(r"^'.+': .+n't .+$"),   # "Not so fast" rejection line ("'input': reason")
+    re.compile(r"^\. Reply 'rematch' to start a new game\.$"),
+    re.compile(r"^.+'s last message didn't go through, so it's still their move\b.*$"),
+    re.compile(r"^You have \d+ active games?:$"),
+    re.compile(r"^You don't have any active games right now\.$"),
+    re.compile(r"^\[.+\] vs .+: .+$"),
+    # reminders
+    re.compile(r"^It's been .+ since the last move in this game\b.*it's your turn\.$"),
+    re.compile(r"^\[.+\] Reminder: still waiting on .+ \(.+\)$"),
+]
+
+# Quote-chain headers an email client inserts (not part of the quote
+# markers above, since those are used to find the split point across the
+# WHOLE body -- these are checked per-line, after splitting, since a
+# reply chain can nest several of them one after another).
+_QUOTE_HEADER_LINE_PATTERNS = [
+    re.compile(r"^On .{0,140}wrote:\s*$"),
+    re.compile(r"^-{2,}\s*Original Message\s*-{2,}", re.IGNORECASE),
+    re.compile(r"^_{5,}\s*$"),
+    re.compile(r"^(From|Sent|To|Subject|Date):\s*.*$", re.IGNORECASE),
+]
+
+
+def _strip_bot_generated_lines(text):
+    """Remove lines from quoted reply text that are recognizably content
+    THIS BOT generated (move confirmations, recent-moves lists,
+    instructions, tally lines, board links, quote-chain headers, etc.),
+    leaving only whatever a human player actually typed. See
+    _BOT_LINE_PATTERNS above for what's recognized and why this is
+    blacklist- rather than whitelist-based."""
+    if not text:
+        return text
+    kept = []
+    for raw_line in text.splitlines():
+        # strip leading '>' quote-depth markers a nested reply chain adds
+        line = re.sub(r"^(>\s*)+", "", raw_line).strip()
+        if not line:
+            kept.append("")
+            continue
+        if any(p.match(line) for p in _QUOTE_HEADER_LINE_PATTERNS):
+            continue
+        if any(p.match(line) for p in _BOT_LINE_PATTERNS):
+            continue
+        kept.append(line)
+    # collapse runs of blank lines left behind by the removals, and trim
+    # leading/trailing blanks
+    result_lines = []
+    for line in kept:
+        if line == "" and (not result_lines or result_lines[-1] == ""):
+            continue
+        result_lines.append(line)
+    return "\n".join(result_lines).strip()
+
 
 def _split_quoted_reply(text):
     """Split an email body into (new_text, quoted_text) at the earliest
@@ -69,13 +170,16 @@ def parse_inbound_improvmx(payload):
     """payload: the parsed JSON body ImprovMX POSTs to your webhook.
     Returns dict with sender, subject (cleaned), body (the part of the
     message above any quoted reply chain), and quoted (whatever came
-    after that split point, if anything -- not discarded, just separated).
+    after that split point, with the bot's own previously-sent content
+    stripped out -- see _strip_bot_generated_lines -- leaving only
+    actual player-written text from earlier in the thread, if any).
     """
     sender = ((payload.get("from") or {}).get("email") or "").strip().lower()
     subject = payload.get("subject", "") or ""
     subject = SUBJECT_PREFIX_RE.sub("", subject).strip()
     raw_body = payload.get("text", "") or ""
     body, quoted = _split_quoted_reply(raw_body.strip())
+    quoted = _strip_bot_generated_lines(quoted)
     return {"sender": sender, "subject": subject, "body": body, "quoted": quoted}
 
 
@@ -162,9 +266,8 @@ def send_board_email(to_addrs, subject, image_path, summary_lines=None,
     if quoted_text:
         quoted_html = (
             "<div style='margin-top:10px; padding-left:12px; "
-            "border-left:3px solid #444; white-space:pre-wrap; "
-            "color:#999; font-size:0.85em;'>"
-            "<em>(quoted from earlier in the thread)</em><br>"
+            "border-left:3px solid #444; white-space:pre-wrap;'>"
+            "<em style='color:#999;'>(quoted from earlier in the thread)</em><br>"
             f"{_escape(quoted_text)}</div>"
         )
 
