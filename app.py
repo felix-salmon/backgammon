@@ -192,6 +192,22 @@ def board_image(game_id):
     return Response(page, mimetype="text/html")
 
 
+def _body_first_line_candidate(body):
+    """If someone just hits reply without touching the subject line --
+    much more friction in Gmail than a plain reply -- their actual move
+    or command often ends up as the first line of the body instead,
+    since the subject is usually left as whatever notification text we
+    last put there. Returns (first_non_blank_line, everything_after_it)
+    so that first line can be tried as the real command, with whatever
+    follows still available as their personal message. Returns
+    (None, body) if the body has no non-blank content at all."""
+    lines = (body or "").splitlines()
+    for i, line in enumerate(lines):
+        if line.strip():
+            return line.strip(), "\n".join(lines[i + 1:]).strip()
+    return None, body
+
+
 def _finish(message_id):
     """Every exit point from inbound() should go through this -- marks
     the webhook delivery as fully handled only once we've actually
@@ -234,7 +250,15 @@ def inbound():
     label, input_text = _extract_label(subject)
     normalized_input = input_text.strip().lower().rstrip(".!")
 
-    if normalized_input in STATUS_TRIGGERS:
+    # If someone just hit reply without editing the subject, its
+    # input_text is usually just whatever notification text we last put
+    # there, not an actual command -- compute the body's first line as a
+    # fallback candidate up front, checked below wherever the
+    # subject-derived text doesn't turn out to be a recognized command.
+    body_candidate, body_candidate_rest = _body_first_line_candidate(body)
+    normalized_body_candidate = (body_candidate or "").strip().lower().rstrip(".!")
+
+    if normalized_input in STATUS_TRIGGERS or normalized_body_candidate in STATUS_TRIGGERS:
         _bg(_send_status, sender)
         return _finish(message_id)
 
@@ -259,6 +283,7 @@ def inbound():
     # game by that label, not just "whichever game is live right now".
     targets_a_specific_finished_game = (
         normalized_input in REMATCH_TRIGGERS or normalized_input in RESEND_TRIGGERS
+        or normalized_body_candidate in REMATCH_TRIGGERS or normalized_body_candidate in RESEND_TRIGGERS
     )
     if (row is None or row["game"].is_over()) and not targets_a_specific_finished_game:
         fallback = store.find_unique_live_game(sender)
@@ -290,26 +315,44 @@ def inbound():
     opponent_email = row["black_email"] if player == WHITE else row["white_email"]
     board_link = f"{base_url}/board/{row['id']}"
 
-    if game.is_over() and normalized_input in REMATCH_TRIGGERS:
+    if game.is_over() and (normalized_input in REMATCH_TRIGGERS or normalized_body_candidate in REMATCH_TRIGGERS):
         _bg(start_rematch, store, row, base_url)
         return _finish(message_id)
 
-    if normalized_input in RESEND_TRIGGERS:
+    if normalized_input in RESEND_TRIGGERS or normalized_body_candidate in RESEND_TRIGGERS:
         _bg(_resend_last_move, row, game, base_url, sender)
         return _finish(message_id)
 
     try:
         result = game.process_input(player, input_text, body)
-    except (IllegalMove, CommandError) as e:
-        quoted_note = f"\n\n(quoted from earlier in the thread)\n{quoted}" if quoted else ""
-        over_hint = ". Reply 'rematch' to start a new game." if game.is_over() else ""
-        _bg(send_text_email, sender, "Not so fast",
-            f"'{input_text}': {e}{over_hint}\n\nCurrent board: {board_link}{quoted_note}")
-        if opponent_email in NOTIFY_WAITING_EMAILS:
-            _bg(send_text_email, opponent_email, f"[{row['label']}] still waiting on {sender_name}",
-                f"{sender_name}'s last message didn't go through, so it's still their move. "
-                f"No action needed from you.\n\nCurrent board: {board_link}")
-        return _finish(message_id)
+    except (IllegalMove, CommandError) as first_error:
+        result = None
+        error = first_error
+        # the subject-derived text didn't work -- if the body's first
+        # line is something different, try THAT as the real command
+        # instead, with whatever follows it as the message. This is the
+        # common case for a plain reply: the subject is just whatever
+        # notification text we last sent, and the actual move is the
+        # first thing they typed in the body.
+        if body_candidate and normalized_body_candidate != normalized_input:
+            try:
+                result = game.process_input(player, body_candidate, body_candidate_rest)
+                input_text = body_candidate
+                body = body_candidate_rest
+                error = None
+            except (IllegalMove, CommandError) as second_error:
+                input_text = body_candidate
+                error = second_error
+        if error is not None:
+            quoted_note = f"\n\n(quoted from earlier in the thread)\n{quoted}" if quoted else ""
+            over_hint = ". Reply 'rematch' to start a new game." if game.is_over() else ""
+            _bg(send_text_email, sender, "Not so fast",
+                f"'{input_text}': {error}{over_hint}\n\nCurrent board: {board_link}{quoted_note}")
+            if opponent_email in NOTIFY_WAITING_EMAILS:
+                _bg(send_text_email, opponent_email, f"[{row['label']}] still waiting on {sender_name}",
+                    f"{sender_name}'s last message didn't go through, so it's still their move. "
+                    f"No action needed from you.\n\nCurrent board: {board_link}")
+            return _finish(message_id)
 
     store.save(row["id"], game)
 

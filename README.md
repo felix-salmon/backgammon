@@ -212,6 +212,18 @@ or `[alice] vs Alice: Felix to respond to a double.` Finished games are
 left out, and whichever games need *your* move come first. If you don't
 have anything active, you'll just be told that instead of an empty list.
 
+## Replying without editing the subject
+
+Editing a subject line is more friction in Gmail than most clients, so
+you don't strictly have to. If you just hit reply and leave the subject
+as whatever notification we last sent (which obviously isn't a real
+move or command on its own), put your actual move or command as the
+first line of the message body instead -- everything after that first
+line still comes through as your personal note, same as always. This
+only kicks in when the subject doesn't work on its own, so it's never
+going to second-guess or override a real command you did put in the
+subject.
+
 ## Multiple games, multiple people
 
 Nothing stops you from running several games at once -- against Simon,
