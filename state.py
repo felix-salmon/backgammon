@@ -122,12 +122,33 @@ class Store:
         specifically because the reminders background thread does its
         own writes (marking a reminder as sent) completely independently
         of any request, so a real inbound webhook occasionally lands at
-        the exact same moment. SQLite's default 5-second wait for a
-        locked database isn't always enough headroom for that to
-        resolve on its own; 20 seconds stays safely under gunicorn's own
-        30-second worker timeout, so a write that's still stuck even
-        after waiting doesn't just trade one failure mode for another."""
-        return sqlite3.connect(self.path, timeout=20)
+        the exact same moment. Kept moderate (not the whole of
+        gunicorn's own 30-second worker timeout) because the retry
+        wrapper below adds further resilience on top of it -- several
+        shorter independent waits are safer than one very long one that
+        risks a request just running out the clock instead."""
+        return sqlite3.connect(self.path, timeout=10)
+
+    def _with_lock_retry(self, fn, attempts=3, backoff=0.5):
+        """Run fn() (a zero-argument callable doing the actual database
+        work), retrying a few times with short backoff specifically on
+        'database is locked' -- e.g. a write landing at the same moment
+        as the reminders thread's own. Each attempt already waits up to
+        _connect's own busy-timeout internally; retrying on top of that
+        multiplies the total patience for genuinely severe contention,
+        while keeping any single wait short enough that a request
+        doesn't run long enough to hit gunicorn's own timeout instead.
+        Anything other than a lock error is never retried -- it's
+        re-raised immediately, since retrying wouldn't help."""
+        delay = backoff
+        for attempt in range(attempts):
+            try:
+                return fn()
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e).lower() or attempt == attempts - 1:
+                    raise
+                time.sleep(delay)
+                delay *= 2
 
     def create_game(self, label, white_email, black_email, white_name="White", black_name="Black"):
         # normalize case at the point of storage -- inbound sender
@@ -208,12 +229,14 @@ class Store:
         }
 
     def save(self, game_id, game):
-        with closing(self._connect()) as con:
-            con.execute(
-                "UPDATE games SET state_json=?, updated_at=? WHERE id=?",
-                (json.dumps(game.to_dict()), time.time(), game_id),
-            )
-            con.commit()
+        def attempt():
+            with closing(self._connect()) as con:
+                con.execute(
+                    "UPDATE games SET state_json=?, updated_at=? WHERE id=?",
+                    (json.dumps(game.to_dict()), time.time(), game_id),
+                )
+                con.commit()
+        self._with_lock_retry(attempt)
 
     def find_unique_live_game(self, email):
         """The player's one and only in-progress game, if they have
@@ -305,46 +328,50 @@ class Store:
         synchronous work per request is normally quick -- anything slow
         like sending mail is backgrounded), and gets taken over rather
         than silently blocking forever."""
-        now = time.time()
-        with closing(self._connect()) as con:
-            try:
-                con.execute(
-                    "INSERT INTO processed_messages (message_id, status, processed_at) "
-                    "VALUES (?, 'pending', ?)",
-                    (message_id, now),
-                )
-                con.commit()
-                return True
-            except sqlite3.IntegrityError:
-                pass
-            row = con.execute(
-                "SELECT status, processed_at FROM processed_messages WHERE message_id=?",
-                (message_id,),
-            ).fetchone()
-            if row is None:
-                return True  # shouldn't happen, but don't block forever over it
-            status, processed_at = row
-            if status == "done":
+        def attempt():
+            now = time.time()
+            with closing(self._connect()) as con:
+                try:
+                    con.execute(
+                        "INSERT INTO processed_messages (message_id, status, processed_at) "
+                        "VALUES (?, 'pending', ?)",
+                        (message_id, now),
+                    )
+                    con.commit()
+                    return True
+                except sqlite3.IntegrityError:
+                    pass
+                row = con.execute(
+                    "SELECT status, processed_at FROM processed_messages WHERE message_id=?",
+                    (message_id,),
+                ).fetchone()
+                if row is None:
+                    return True  # shouldn't happen, but don't block forever over it
+                status, processed_at = row
+                if status == "done":
+                    return False
+                if now - processed_at > pending_ttl:
+                    con.execute(
+                        "UPDATE processed_messages SET processed_at=? WHERE message_id=?",
+                        (now, message_id),
+                    )
+                    con.commit()
+                    return True
                 return False
-            if now - processed_at > pending_ttl:
-                con.execute(
-                    "UPDATE processed_messages SET processed_at=? WHERE message_id=?",
-                    (now, message_id),
-                )
-                con.commit()
-                return True
-            return False
+        return self._with_lock_retry(attempt)
 
     def finish_message(self, message_id):
         """Mark a claimed message as fully handled. Call this only once
         the corresponding work (applying a move, sending a reply, etc.)
         has actually completed."""
-        with closing(self._connect()) as con:
-            con.execute(
-                "UPDATE processed_messages SET status='done' WHERE message_id=?",
-                (message_id,),
-            )
-            con.commit()
+        def attempt():
+            with closing(self._connect()) as con:
+                con.execute(
+                    "UPDATE processed_messages SET status='done' WHERE message_id=?",
+                    (message_id,),
+                )
+                con.commit()
+        self._with_lock_retry(attempt)
 
     def record_result(self, game_id, winner_email, loser_email, points, multiplier,
                        cube_value, win_reason):
@@ -397,6 +424,8 @@ class Store:
 
     def mark_reminder_sent(self, game_id, which, updated_at_value):
         col = "reminder_48h_at" if which == "48h" else "reminder_7d_at"
-        with closing(self._connect()) as con:
-            con.execute(f"UPDATE games SET {col}=? WHERE id=?", (updated_at_value, game_id))
-            con.commit()
+        def attempt():
+            with closing(self._connect()) as con:
+                con.execute(f"UPDATE games SET {col}=? WHERE id=?", (updated_at_value, game_id))
+                con.commit()
+        self._with_lock_retry(attempt)
