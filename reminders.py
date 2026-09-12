@@ -72,7 +72,16 @@ def _send_reminder(row, game, since_label):
 def check_once(store):
     """Scan every game and send any reminders that are due. Kept
     separate from the sleep loop so tests (or a manual check) can call
-    it directly without waiting on the real interval."""
+    it directly without waiting on the real interval.
+
+    Sleeps briefly after each reminder actually sent (not for every game
+    just checked) -- if many games are overdue at once, e.g. after a
+    long stretch where moves weren't going through for some other
+    reason, processing them all back-to-back would have this thread
+    hold the database's write lock in a tight, rapid loop for many
+    seconds straight, which can starve a real inbound webhook request
+    trying to get its own turn at it the whole time. A short pause
+    between sends spreads that out instead."""
     now = time.time()
     for row in store.list_all_raw():
         try:
@@ -92,9 +101,11 @@ def check_once(store):
             # game only happens once it's already past a week stale, with
             # the 48h mark never having been set at all).
             store.mark_reminder_sent(row["id"], "48h", row["updated_at"])
+            time.sleep(1)
         elif elapsed >= REMINDER_48H_SECONDS and row["reminder_48h_at"] != row["updated_at"]:
             _send_reminder(row, game, "48 hours")
             store.mark_reminder_sent(row["id"], "48h", row["updated_at"])
+            time.sleep(1)
 
 
 def start_background_loop(store):

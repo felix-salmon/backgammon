@@ -122,24 +122,32 @@ class Store:
         specifically because the reminders background thread does its
         own writes (marking a reminder as sent) completely independently
         of any request, so a real inbound webhook occasionally lands at
-        the exact same moment. Kept moderate (not the whole of
-        gunicorn's own 30-second worker timeout) because the retry
-        wrapper below adds further resilience on top of it -- several
-        shorter independent waits are safer than one very long one that
-        risks a request just running out the clock instead."""
-        return sqlite3.connect(self.path, timeout=10)
+        the exact same moment.
 
-    def _with_lock_retry(self, fn, attempts=3, backoff=0.5):
+        Kept deliberately short (well under gunicorn's own worker
+        timeout, 30 seconds by default) -- a prior version of this used
+        a 10-second timeout with up to 3 retries, whose worst case
+        (10 + backoff + 10 + backoff + 10 ~= 31.5s) could exceed 30
+        seconds on its own, and did in practice: gunicorn's watchdog
+        killed the whole worker mid-retry rather than letting the
+        request just fail cleanly, which is a far worse outcome than a
+        single clean 'database is locked' error. 4 seconds keeps a
+        single request's total worst case (even across a few of these
+        calls back to back) safely under that ceiling."""
+        return sqlite3.connect(self.path, timeout=4)
+
+    def _with_lock_retry(self, fn, attempts=2, backoff=1.0):
         """Run fn() (a zero-argument callable doing the actual database
-        work), retrying a few times with short backoff specifically on
+        work), retrying once more with short backoff specifically on
         'database is locked' -- e.g. a write landing at the same moment
         as the reminders thread's own. Each attempt already waits up to
         _connect's own busy-timeout internally; retrying on top of that
-        multiplies the total patience for genuinely severe contention,
-        while keeping any single wait short enough that a request
-        doesn't run long enough to hit gunicorn's own timeout instead.
-        Anything other than a lock error is never retried -- it's
-        re-raised immediately, since retrying wouldn't help."""
+        adds real resilience for brief contention, while the total
+        worst case across attempts and backoff stays well short of
+        gunicorn's own worker timeout -- see _connect for why that
+        matters more than squeezing out more retries. Anything other
+        than a lock error is never retried -- it's re-raised
+        immediately, since retrying wouldn't help."""
         delay = backoff
         for attempt in range(attempts):
             try:
