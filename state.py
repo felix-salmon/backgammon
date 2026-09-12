@@ -246,6 +246,41 @@ class Store:
                 con.commit()
         self._with_lock_retry(attempt)
 
+    def _load_all_for_email(self, email):
+        """Every game tied to this email address, fetched in a single
+        query and deserialized in memory -- rather than one query for
+        the candidate ids, then a separate round-trip (self.load) per
+        candidate. That N+1 pattern is what find_game_for_player and
+        find_unique_live_game used to do, and it gets worse the more
+        games a player accumulates: a player with a dozen games could
+        trigger a dozen separate connections (each with its own
+        busy-timeout wait if there's any contention) just to resolve
+        one inbound email, and if the label lookup falls through to the
+        stale-label fallback, that doubles to two dozen. One query
+        avoids all of that. Skips (and logs) any row that fails to
+        deserialize, same as Store.load's own protection against a
+        single corrupted record taking down a lookup that touches
+        several games at once."""
+        with closing(self._connect()) as con:
+            rows = con.execute(
+                "SELECT id, label, white_email, black_email, white_name, black_name, state_json "
+                "FROM games WHERE white_email=? OR black_email=?", (email, email)
+            ).fetchall()
+        result = []
+        for gid, label, we, be, wn, bn, state_json in rows:
+            try:
+                game = Game.from_dict(json.loads(state_json))
+            except Exception as e:
+                print(f"[state.py] failed to load game {gid} ({label}): {e}")
+                continue
+            result.append({
+                "id": gid, "label": label,
+                "white_email": we, "black_email": be,
+                "white_name": wn, "black_name": bn,
+                "game": game,
+            })
+        return result
+
     def find_unique_live_game(self, email):
         """The player's one and only in-progress game, if they have
         exactly one -- regardless of any other finished games under the
@@ -253,12 +288,8 @@ class Store:
         a finished game (or no game at all), but the sender clearly only
         has one active game -- e.g. replying to a stale email thread
         whose subject still carries an old, now-finished label."""
-        with closing(self._connect()) as con:
-            rows = con.execute(
-                "SELECT id FROM games WHERE white_email=? OR black_email=?", (email, email)
-            ).fetchall()
-        loaded = [self.load(r[0]) for r in rows]
-        in_progress = [r for r in loaded if r is not None and not r["game"].is_over()]
+        loaded = self._load_all_for_email(email)
+        in_progress = [r for r in loaded if not r["game"].is_over()]
         return in_progress[0] if len(in_progress) == 1 else None
 
     def find_game_for_player(self, email, label=None):
@@ -269,21 +300,14 @@ class Store:
         still in progress, that's the one returned even if other, finished games
         also exist under the same email (e.g. right after a rematch, when the old
         finished game and the new live one both still match by address)."""
-        with closing(self._connect()) as con:
-            rows = con.execute(
-                "SELECT id FROM games WHERE white_email=? OR black_email=?", (email, email)
-            ).fetchall()
-        ids = [r[0] for r in rows]
-        if not ids:
+        loaded = self._load_all_for_email(email)
+        if not loaded:
             return None
         if label:
-            for gid in ids:
-                row = self.load(gid)
-                if row and row["label"].lower() == label.lower():
+            for row in loaded:
+                if row["label"].lower() == label.lower():
                     return row
             return None
-        loaded = [self.load(gid) for gid in ids]
-        loaded = [r for r in loaded if r is not None]
         in_progress = [r for r in loaded if not r["game"].is_over()]
         if len(in_progress) == 1:
             return in_progress[0]
