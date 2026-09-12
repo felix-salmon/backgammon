@@ -15,6 +15,19 @@ from email_io import send_board_email
 
 REMATCH_TRIGGERS = {"rematch", "new game", "again", "play again", "new"}
 
+# Email addresses of players who specifically want their home board to
+# always read 1-6 -- which, under this app's absolute numbering, is
+# already exactly what White's home board is (it doesn't rotate or
+# change with perspective, just with who's on roll). Rather than build
+# an entire separate relative-numbering scheme for one person's
+# preference, the simplest fix is making sure they're always assigned
+# White, regardless of who happens to initiate the game or rematch.
+# Set via a comma-separated env var so this doesn't need a code change
+# to add someone.
+ALWAYS_WHITE_EMAILS = {
+    e.strip().lower() for e in os.environ.get("ALWAYS_WHITE_EMAILS", "").split(",") if e.strip()
+}
+
 
 def format_tally_line(tally, name_a, email_a, name_b, email_b):
     """The one-line head-to-head summary shown at the end of a game and
@@ -38,6 +51,15 @@ def format_tally_line(tally, name_a, email_a, name_b, email_b):
 
 def create_and_announce(store, label, white_email, white_name, black_email, black_name,
                          base_url=None):
+    # honor an "always White" preference regardless of who initiated
+    # this game -- if only the intended-Black player has it, swap the
+    # assignment; if both do (or neither), leave it as given, since
+    # there's no way to satisfy two such preferences at once anyway.
+    if (black_email.strip().lower() in ALWAYS_WHITE_EMAILS
+            and white_email.strip().lower() not in ALWAYS_WHITE_EMAILS):
+        white_email, black_email = black_email, white_email
+        white_name, black_name = black_name, white_name
+
     gid = store.create_game(label, white_email, black_email, white_name, black_name)
     row = store.load(gid)
     game = row["game"]

@@ -335,6 +335,13 @@ from the sender).
    what lets the reminder emails (see below) include a board link, since
    they're sent from a background thread with no incoming request to
    read the URL from the way normal replies can.
+
+   If someone specifically wants their home board to always read 1-6
+   (this app's absolute numbering means that's already always true for
+   White, since it doesn't rotate or change with whose turn it is), set
+   `ALWAYS_WHITE_EMAILS` to a comma-separated list of their addresses --
+   they'll be assigned White in any new game or rematch, no matter who
+   initiates it.
 7. Deploy. Render gives you a URL like `https://backgammon-pbm.onrender.com`.
 
 ### 3. Point ImprovMX at it
