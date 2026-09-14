@@ -166,6 +166,30 @@ def _split_quoted_reply(text):
     return text[:cut_at].strip(), text[cut_at:].strip()
 
 
+def _reflow_hard_wrapped_paragraphs(text):
+    """Undo the hard line-wrapping many email clients apply to long
+    plain-text paragraphs (breaking a single paragraph into a run of
+    short lines, often ~70 characters wide, for compatibility with old
+    mail readers). We display text with white-space:pre-wrap, which
+    faithfully preserves every one of those line breaks -- so without
+    this, a paragraph someone typed as one continuous block shows up
+    broken into short, choppy lines, especially bad on a narrow mobile
+    screen. Splits on any run of one or more blank lines (the real
+    paragraph separators in plain text) and joins each resulting
+    block's own lines back into one, since that's what actually
+    distinguishes an intentional paragraph break from a mid-paragraph
+    wrap without a format=flowed marker to go on."""
+    if not text:
+        return text
+    blocks = re.split(r"\n\s*\n", text)
+    paragraphs = []
+    for block in blocks:
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if lines:
+            paragraphs.append(" ".join(lines))
+    return "\n\n".join(paragraphs)
+
+
 def parse_inbound_improvmx(payload):
     """payload: the parsed JSON body ImprovMX POSTs to your webhook.
     Returns dict with sender, subject (cleaned), body (the part of the
@@ -173,13 +197,17 @@ def parse_inbound_improvmx(payload):
     after that split point, with the bot's own previously-sent content
     stripped out -- see _strip_bot_generated_lines -- leaving only
     actual player-written text from earlier in the thread, if any).
+    Both body and quoted have hard-wrapped paragraphs re-flowed back
+    into single lines -- see _reflow_hard_wrapped_paragraphs.
     """
     sender = ((payload.get("from") or {}).get("email") or "").strip().lower()
     subject = payload.get("subject", "") or ""
     subject = SUBJECT_PREFIX_RE.sub("", subject).strip()
     raw_body = payload.get("text", "") or ""
     body, quoted = _split_quoted_reply(raw_body.strip())
+    body = _reflow_hard_wrapped_paragraphs(body)
     quoted = _strip_bot_generated_lines(quoted)
+    quoted = _reflow_hard_wrapped_paragraphs(quoted)
     return {"sender": sender, "subject": subject, "body": body, "quoted": quoted}
 
 
