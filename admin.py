@@ -50,7 +50,7 @@ def format_tally_line(tally, name_a, email_a, name_b, email_b):
 
 
 def create_and_announce(store, label, white_email, white_name, black_email, black_name,
-                         base_url=None):
+                         base_url=None, message=None, message_sender_name=None):
     # honor an "always White" preference regardless of who initiated
     # this game -- if only the intended-Black player has it, swap the
     # assignment; if both do (or neither), leave it as given, since
@@ -97,6 +97,7 @@ def create_and_announce(store, label, white_email, white_name, black_email, blac
         send_board_email(
             [white_email, black_email], subj, png_path,
             summary_lines=summary_lines, footer_lines=footer_lines,
+            sender_name=message_sender_name, message_text=message,
         )
     return gid
 
@@ -136,7 +137,7 @@ def _first_available_label(store, email_a, email_b, desired_label):
     return _next_label(store, email_a, email_b, desired_label)
 
 
-def start_rematch(store, finished_row, base_url=None):
+def start_rematch(store, finished_row, base_url=None, message=None, message_sender_name=None):
     """Start a fresh game between the same two players as finished_row
     (expected to be a game that's already over), auto-generating a label
     that won't collide with any of their previous games."""
@@ -146,6 +147,6 @@ def start_rematch(store, finished_row, base_url=None):
         store, new_label,
         finished_row["white_email"], finished_row["white_name"],
         finished_row["black_email"], finished_row["black_name"],
-        base_url=base_url,
+        base_url=base_url, message=message, message_sender_name=message_sender_name,
     )
 

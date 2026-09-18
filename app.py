@@ -270,7 +270,7 @@ def inbound():
         desired_label = (opponent_name.split()[0] if opponent_name else "game").lower()
         label = _first_available_label(store, sender, opponent_email, desired_label)
         _bg(create_and_announce, store, label, sender, sender_name, opponent_email, opponent_name,
-            base_url)
+            base_url, body, sender_name)
         return _finish(message_id)
 
     row = store.find_game_for_player(sender, label=label)
@@ -316,7 +316,12 @@ def inbound():
     board_link = f"{base_url}/board/{row['id']}"
 
     if game.is_over() and (normalized_input in REMATCH_TRIGGERS or normalized_body_candidate in REMATCH_TRIGGERS):
-        _bg(start_rematch, store, row, base_url)
+        # if 'rematch' came from the subject, the whole body is the
+        # message; if it came from the body's first line instead (see
+        # the fallback above), that line IS the command, so only what's
+        # left after it counts as the actual message
+        rematch_message = body if normalized_input in REMATCH_TRIGGERS else body_candidate_rest
+        _bg(start_rematch, store, row, base_url, rematch_message, sender_name)
         return _finish(message_id)
 
     if normalized_input in RESEND_TRIGGERS or normalized_body_candidate in RESEND_TRIGGERS:
