@@ -107,6 +107,32 @@ one-line heads-up ("so-and-so's last message didn't go through, still
 their move") with the same link, so a silent failure doesn't leave the
 other player wondering why nothing's happening.
 
+## Undo
+
+Entered a move that was legal but not what you meant? Send **`undo`** to
+take back your own most recent move -- but only while it's still genuinely
+your opponent's turn (once they've also moved, or even just offered a
+double, it's too late).
+
+What happens next depends on whether your opponent has rolled yet:
+
+- If they're in manual mode and haven't rolled (or your move just won
+  the game, so there's no "their next turn" to speak of), the undo
+  happens immediately -- you get your dice back and can play differently.
+- If they've already rolled real dice for their own turn, undoing would
+  mean discarding that roll, so it needs their agreement first. They
+  reply **`allow`** or **`refuse`**, and are blocked from doing anything
+  else in the meantime.
+
+This can chain: if your opponent agrees and then decides *they* want to
+undo their own last move too, that's allowed the same way, requiring your
+agreement in turn if you're now holding a real roll of your own. There's
+no artificial limit on how far back this can go, as long as each request
+is for the asker's own most recent move and each hop still needs consent
+from whoever'd be giving something up. If your move was your only legal
+way to play that roll, undo won't offer to do anything -- there was
+never a different way to play it, so undoing wouldn't change anything.
+
 ## The doubling cube
 
 Exactly like PBM: send **`manual`** at any point and *your own* turns stop

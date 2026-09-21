@@ -109,6 +109,11 @@ class TurnRecord:
     move_text: str
     message: str = ""
     hits: list = field(default_factory=list)  # points where an opponent blot was hit
+    board_before: object = None  # Board.to_dict() snapshot from just before this
+                                  # turn -- lets 'undo' revert to it directly rather
+                                  # than needing to replay the whole game. None for
+                                  # cube events (nothing to revert) and for history
+                                  # saved before this field existed.
 
 
 @dataclass
@@ -117,6 +122,17 @@ class CubeEvent:
     player: str
     value: int
     message: str = ""
+
+
+@dataclass
+class UndoEvent:
+    kind: str  # "done" | "requested" | "declined"
+    requester: str  # whose move was (or would be) undone
+    move_text: str = ""
+    # for "done" specifically: True if it happened immediately (opponent
+    # hadn't rolled, or the move had just ended the game), False if it
+    # required the opponent's consent (via 'allow') to get here
+    immediate: bool = True
 
 
 @dataclass
@@ -132,6 +148,8 @@ class Game:
     auto_dice: dict = field(default_factory=lambda: {WHITE: True, BLACK: True})
     greedy_mode: dict = field(default_factory=lambda: {WHITE: False, BLACK: False})
     awaiting: str = AWAIT_MOVE
+    pending_undo_by: Optional[str] = None  # set while an undo needs the
+                                            # opponent's consent (see _cmd_undo)
     pending_doubler: Optional[str] = None
     pending_cube_value: Optional[int] = None
     win_reason: Optional[str] = None   # "normal" | "resignation" | "drop"
@@ -164,11 +182,12 @@ class Game:
             "auto_dice": dict(self.auto_dice),
             "greedy_mode": dict(self.greedy_mode),
             "awaiting": self.awaiting,
+            "pending_undo_by": self.pending_undo_by,
             "pending_doubler": self.pending_doubler,
             "pending_cube_value": self.pending_cube_value,
             "history": [
                 {"player": h.player, "dice": list(h.dice), "move_text": h.move_text,
-                 "message": h.message, "hits": list(h.hits)}
+                 "message": h.message, "hits": list(h.hits), "board_before": h.board_before}
                 for h in self.history
             ],
         }
@@ -194,12 +213,14 @@ class Game:
             greedy_mode={WHITE: d.get("greedy_mode", {}).get(WHITE, False),
                          BLACK: d.get("greedy_mode", {}).get(BLACK, False)},
             awaiting=d.get("awaiting", AWAIT_MOVE),
+            pending_undo_by=d.get("pending_undo_by"),
             pending_doubler=d.get("pending_doubler"),
             pending_cube_value=d.get("pending_cube_value"),
         )
         g.history = [
             TurnRecord(player=h["player"], dice=tuple(h["dice"]), move_text=h["move_text"],
-                       message=h.get("message", ""), hits=h.get("hits", []))
+                       message=h.get("message", ""), hits=h.get("hits", []),
+                       board_before=h.get("board_before"))
             for h in d.get("history", [])
         ]
         return g
@@ -221,6 +242,13 @@ class Game:
         to report if it wants to.
         """
         cmd = text.strip().lower().rstrip(".!")
+
+        if (self.pending_undo_by is not None and sender_player != self.pending_undo_by
+                and cmd not in ("allow", "refuse")):
+            raise CommandError(
+                "there's a pending request to undo the last move -- reply 'allow' or 'refuse' first"
+            )
+
         if cmd in ("manual",):
             result = self._cmd_manual(sender_player)
         elif cmd in ("auto", "automatic"):
@@ -235,6 +263,12 @@ class Game:
             result = self._cmd_drop(sender_player, message)
         elif cmd == "resign":
             result = self._cmd_resign(sender_player, message)
+        elif cmd == "undo":
+            result = self._cmd_undo(sender_player)
+        elif cmd == "allow":
+            result = self._cmd_allow_undo(sender_player)
+        elif cmd == "refuse":
+            result = self._cmd_refuse_undo(sender_player)
         elif cmd == "greedy":
             result = self._cmd_greedy(sender_player, message)
         else:
@@ -266,6 +300,7 @@ class Game:
 
         remaining = dice_multiset(self.dice)
         dice_available = len(remaining)
+        board_before = self.board.to_dict()
         work = self.board.clone()
         hits = []
         applied_display = []
@@ -349,7 +384,7 @@ class Game:
         self.board = work
         display_text = " ".join(applied_display)
         record = TurnRecord(player=mover, dice=self.dice, move_text=display_text,
-                             message=message, hits=hits)
+                             message=message, hits=hits, board_before=board_before)
         self.history.append(record)
 
         if self.board.borne_off_all(mover):
@@ -470,6 +505,78 @@ class Game:
                                         move_text="resigned", hits=[]))
         return CubeEvent(kind="resigned", player=player, value=self.cube_value, message=message)
 
+    def _cmd_undo(self, player):
+        """Take back your own most recent move. If the opponent hasn't
+        rolled yet for their own turn (only possible in manual dice mode
+        -- auto mode rolls immediately), or your move just ended the
+        game, there's nothing of theirs to give up, so this happens
+        immediately. Otherwise they've already rolled real dice for a
+        turn that would cease to have happened, so it needs their
+        agreement first -- see _cmd_allow_undo/_cmd_refuse_undo."""
+        if not self.history:
+            raise CommandError("there's no move to undo")
+        last = self.history[-1]
+        if last.player != player:
+            raise CommandError(
+                "you can only undo your own most recent move, and something else "
+                "has happened since -- it's too late to undo"
+            )
+        if not last.dice:
+            raise CommandError("that wasn't a move, so there's nothing to undo")
+        if last.board_before is None:
+            raise CommandError("that move is too old to undo")
+        if self.pending_undo_by is not None:
+            raise CommandError("there's already a pending undo request")
+
+        # If the same position and dice would STILL force this exact
+        # move (no legal alternative existed), undoing accomplishes
+        # nothing -- auto_resolve would just re-force the identical
+        # move right back the moment control returns to this player,
+        # silently defeating the whole point of asking for it back.
+        prior_board = Board.from_dict(last.board_before)
+        was_forced, _ = _is_forced(prior_board, last.player, last.dice)
+        if was_forced:
+            raise CommandError(
+                "that was your only legal way to play that roll, so there's nothing "
+                "different to do -- undoing it wouldn't change anything"
+            )
+
+        needs_consent = (not self.is_over()) and self.awaiting == AWAIT_MOVE
+        if needs_consent:
+            self.pending_undo_by = player
+            return UndoEvent(kind="requested", requester=player, move_text=last.move_text)
+        self._perform_undo(last)
+        return UndoEvent(kind="done", requester=player, move_text=last.move_text, immediate=True)
+
+    def _cmd_allow_undo(self, player):
+        if self.pending_undo_by is None:
+            raise CommandError("there's no pending undo request")
+        if player == self.pending_undo_by:
+            raise CommandError("you can't agree to your own undo request -- waiting on your opponent")
+        last = self.history[-1]
+        requester = self.pending_undo_by
+        self._perform_undo(last)
+        return UndoEvent(kind="done", requester=requester, move_text=last.move_text, immediate=False)
+
+    def _cmd_refuse_undo(self, player):
+        if self.pending_undo_by is None:
+            raise CommandError("there's no pending undo request")
+        if player == self.pending_undo_by:
+            raise CommandError("you can't refuse your own undo request -- waiting on your opponent")
+        requester = self.pending_undo_by
+        self.pending_undo_by = None
+        return UndoEvent(kind="declined", requester=requester)
+
+    def _perform_undo(self, last):
+        self.board = Board.from_dict(last.board_before)
+        self.to_move = last.player
+        self.dice = last.dice
+        self.awaiting = AWAIT_MOVE
+        self.winner = None
+        self.win_reason = None
+        self.pending_undo_by = None
+        self.history.pop()
+
     def _cmd_greedy(self, player, message):
         if self.is_over():
             raise CommandError("the game is already over")
@@ -515,6 +622,7 @@ class Game:
         """Apply an already-validated (src, dest, die) hop list directly,
         bypassing notation parsing -- used by forced-move automation and
         the 'greedy' command, which both compute hops programmatically."""
+        board_before = self.board.to_dict()
         work = self.board.clone()
         hits = []
         display = []
@@ -530,7 +638,7 @@ class Game:
         self.board = work
         move_text = " ".join(display) if display else "(no legal move)"
         record = TurnRecord(player=player, dice=self.dice, move_text=move_text,
-                             message=message, hits=hits)
+                             message=message, hits=hits, board_before=board_before)
         self.history.append(record)
 
         if self.board.borne_off_all(player):

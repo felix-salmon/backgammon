@@ -14,6 +14,9 @@ Commands you can type at the move prompt, in addition to move notation:
     take      -- accept a pending double
     drop      -- decline a pending double (concede at the current cube value)
     resign    -- concede the game outright
+    undo      -- take back your OWN most recent move; happens immediately
+                 if your opponent hasn't rolled yet, otherwise asks them to
+                 'allow' or 'refuse' it, since they'd be giving up a real roll
     greedy    -- toggle bear-off auto-play on/off for yourself (like manual/auto)
                  -- once you're all home, plays any turn with one clear way to
                  bear off the most checkers, leaves anything else for you

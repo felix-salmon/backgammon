@@ -25,7 +25,7 @@ import threading
 from flask import Flask, request, Response
 
 from game import (
-    IllegalMove, CommandError, TurnRecord, CubeEvent,
+    IllegalMove, CommandError, TurnRecord, CubeEvent, UndoEvent,
     AWAIT_DOUBLE_RESPONSE, AWAIT_ROLL_OR_DOUBLE,
 )
 from render import save_board_png
@@ -455,6 +455,26 @@ def _notify_both(row, game, message, result, base_url=None, sender_player=None, 
         summary_lines.append(f"{mover_name} played {result.move_text}.")
         if result.hits:
             summary_lines.append(f"Hit on: {', '.join(str(p) for p in result.hits)}.")
+    elif isinstance(result, UndoEvent):
+        who = row["white_name"] if result.requester == WHITE else row["black_name"]
+        if result.kind == "requested":
+            summary_lines.append(
+                f"{who} asked to undo their last move ({result.move_text}) -- needs the "
+                f"other player's OK, since they've already rolled for their own turn."
+            )
+        elif result.kind == "done":
+            if result.immediate:
+                summary_lines.append(f"{who} undid their last move ({result.move_text}).")
+            else:
+                summary_lines.append(
+                    f"{who}'s last move ({result.move_text}) was undone, with the other "
+                    f"player's agreement."
+                )
+        elif result.kind == "declined":
+            summary_lines.append(
+                f"The request to undo {who}'s last move ({result.move_text}) was declined -- "
+                f"it stands."
+            )
 
     for auto in game.last_auto_played:
         who = row["white_name"] if auto.player == WHITE else row["black_name"]
@@ -635,6 +655,13 @@ def _subject_summary(game, result, row):
             "resigned": "resigned",
         }.get(result.kind, result.kind)
         happened = f"{who} {verb}"
+    elif isinstance(result, UndoEvent):
+        who = _player_name(row, result.requester)
+        happened = {
+            "requested": f"{who} asked to undo their move",
+            "done": f"{who}'s move was undone",
+            "declined": f"the request to undo {who}'s move was declined",
+        }.get(result.kind, result.kind)
 
     next_part = _next_part(game, row)
     return f"{next_part} after {happened}" if happened else next_part
