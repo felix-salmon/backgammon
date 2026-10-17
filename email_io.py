@@ -24,6 +24,7 @@ import os
 import re
 import smtplib
 from email.message import EmailMessage
+from email.utils import make_msgid
 
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.improvmx.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
@@ -331,13 +332,20 @@ def send_board_email(to_addrs, subject, image_path, summary_lines=None,
       {footer_html}
     </div>
     """
+    # Unique Content-ID per email. A fixed cid ("board") makes some mail
+    # clients (iOS Mail especially) reuse a cached image from a different
+    # message that used the same cid -- so a player in two games would see
+    # one game's board in the other game's email.
+    board_cid = make_msgid(domain="board.local")
+    html = html.replace("cid:board", f"cid:{board_cid[1:-1]}")
     msg.add_alternative(html, subtype="html")
 
     with open(image_path, "rb") as f:
         img_data = f.read()
     # attach inline image to the html alternative part
     html_part = msg.get_payload()[-1]
-    html_part.add_related(img_data, maintype="image", subtype="png", cid="<board>")
+    html_part.add_related(img_data, maintype="image", subtype="png", cid=board_cid,
+                          filename=f"board-{board_cid[1:9]}.png")
 
     _send(msg)
 
