@@ -171,6 +171,7 @@ def board_image(game_id):
             white_name=row["white_name"], black_name=row["black_name"],
             turn_no=len(game.history) + 1,
             cube_value=game.cube_value, cube_owner=game.cube_owner,
+            manual=game.manual_players,
             status_text=game.status_text(row["white_name"], row["black_name"]),
         )
         with open(png_path, "rb") as f:
@@ -420,6 +421,7 @@ def _resend_last_move(row, game, base_url, requester_email):
             white_name=row["white_name"], black_name=row["black_name"],
             turn_no=len(game.history) + 1,
             cube_value=game.cube_value, cube_owner=game.cube_owner,
+            manual=game.manual_players,
             status_text=game.status_text(row["white_name"], row["black_name"]),
         )
         next_part = _next_part(game, row)
@@ -514,6 +516,7 @@ def _notify_both(row, game, message, result, base_url=None, sender_player=None, 
             white_name=row["white_name"], black_name=row["black_name"],
             turn_no=len(game.history) + 1,
             cube_value=game.cube_value, cube_owner=game.cube_owner,
+            manual=game.manual_players,
             status_text=game.status_text(row["white_name"], row["black_name"]),
         )
         subj = f"[{row['label']}] {_subject_summary(game, result, row)}"

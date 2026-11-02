@@ -111,6 +111,7 @@ def main():
             white_name=white_name, black_name=black_name,
             turn_no=step + 1 if not g.is_over() else step,
             cube_value=g.cube_value, cube_owner=g.cube_owner,
+            manual=g.manual_players,
             status_text=g.status_text(white_name, black_name),
         )
         print(f"  -> board saved to {png_path}\n")

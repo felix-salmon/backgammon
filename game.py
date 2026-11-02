@@ -399,6 +399,11 @@ class Game:
 
     # ---------- cube / dice-mode commands ----------
 
+    @property
+    def manual_players(self):
+        """Colors currently in manual dice mode (shown as an M on the board)."""
+        return [p for p, auto in self.auto_dice.items() if not auto]
+
     def _cmd_manual(self, player):
         if self.is_over():
             raise CommandError("the game is already over")

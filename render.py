@@ -150,7 +150,8 @@ def _draw_off_stack(d, box_left, box_right, start_y, count, color, outline_color
 
 def draw_board(board, to_move=None, dice=None,
                white_name="White", black_name="Black", turn_no=None,
-               cube_value=1, cube_owner=None, status_text=None, theme="palm_springs"):
+               cube_value=1, cube_owner=None, status_text=None, theme="palm_springs",
+               manual=None):
     palette = THEMES.get(theme, THEMES["classic"])
     bg = palette["bg"]
     board_bg = palette["board_bg"]
@@ -275,6 +276,15 @@ def draw_board(board, to_move=None, dice=None,
 
     d.text((cx, box_top_top + 12), top_color, fill=text, font=f_off, anchor="mm")
     d.text((cx, box_bot_top + 12), bottom_color, fill=text, font=f_off, anchor="mm")
+
+    # Small "M" badge beside the color label for any player who's switched
+    # to manual dice mode, so it's obvious at a glance whether it's on.
+    f_m = _font(11, bold=True)
+    for color, box_top in ((top_color, box_top_top), (bottom_color, box_bot_top)):
+        if manual and color in manual:
+            mx, my = off_x + off_box_w - 10, box_top + 12
+            d.rounded_rectangle([mx - 7, my - 7, mx + 7, my + 7], radius=3, fill=text)
+            d.text((mx, my), "M", fill=bg, font=f_m, anchor="mm")
     d.text((cx, box_top_bottom - 9), f"{top_pips}p", fill=point_label, font=f_pip, anchor="mm")
     d.text((cx, box_bot_bottom - 9), f"{bottom_pips}p", fill=point_label, font=f_pip, anchor="mm")
 

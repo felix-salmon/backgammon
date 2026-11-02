@@ -71,6 +71,7 @@ def create_and_announce(store, label, white_email, white_name, black_email, blac
             to_move=game.to_move, dice=game.dice,
             white_name=white_name, black_name=black_name, turn_no=1,
             cube_value=game.cube_value, cube_owner=game.cube_owner,
+            manual=game.manual_players,
             status_text=game.status_text(white_name, black_name),
         )
         mover_name = white_name if game.to_move == "W" else black_name

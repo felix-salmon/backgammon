@@ -55,6 +55,7 @@ def _send_reminder(row, game, since_label):
             white_name=row["white_name"], black_name=row["black_name"],
             turn_no=len(game.history) + 1,
             cube_value=game.cube_value, cube_owner=game.cube_owner,
+            manual=game.manual_players,
             status_text=game.status_text(row["white_name"], row["black_name"]),
         )
         subj = f"[{row['label']}] Reminder: still waiting on {actor_name} ({since_label})"
