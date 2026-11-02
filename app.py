@@ -22,6 +22,7 @@ import re
 import sqlite3
 import tempfile
 import threading
+import time
 import traceback
 
 from flask import Flask, request, Response
@@ -223,6 +224,9 @@ def _finish(message_id):
     return ("", 204)
 
 
+_last_lock_diag = 0.0
+
+
 @app.route("/inbound", methods=["POST"])
 def inbound():
     """Wrapper around _inbound_impl: if anything unexpected blows up, log
@@ -238,6 +242,10 @@ def inbound():
             # Answer 503 (not 204) so ImprovMX keeps retrying with its
             # backoff -- the message was never claimed, so a retry is safe.
             print(f"[inbound] database locked, asking sender to retry: {e}")
+            global _last_lock_diag
+            if time.time() - _last_lock_diag > 60:     # at most once a minute
+                _last_lock_diag = time.time()
+                print("[lock diagnostics]\n" + store.diagnose_lock())
             if payload.get("message-id"):
                 store.release_message(payload["message-id"])
             return ("database busy, retry", 503, {"Retry-After": "30"})

@@ -4,6 +4,8 @@ Enough for a couple of friends running a handful of games at once.
 """
 
 import json
+import threading
+import os
 import sqlite3
 import time
 from contextlib import closing
@@ -412,6 +414,54 @@ class Store:
                     return True
                 return False
         return self._with_lock_retry(attempt)
+
+    def diagnose_lock(self):
+        """A human-readable snapshot of who might be holding the database
+        lock: every thread's current stack in THIS process, which other
+        processes have the file open, and the kernel's own record of
+        POSIX locks on its inode (/proc/locks). Logged whenever a request
+        hits 'database is locked', so the holder can be identified from
+        the logs instead of guessed at. Never raises."""
+        import sys, traceback as tb
+        out = []
+        try:
+            out.append(f"pid={os.getpid()} time={time.strftime('%H:%M:%S')}")
+            real = os.path.realpath(self.path)
+            st = os.stat(real)
+            out.append(f"db={real} inode={st.st_ino} size={st.st_size}")
+            for suffix in ("-journal", "-wal", "-shm"):
+                p = real + suffix
+                if os.path.exists(p):
+                    s2 = os.stat(p)
+                    out.append(f"  {suffix} exists: size={s2.st_size} age={time.time() - s2.st_mtime:.0f}s")
+            names = {t.ident: t.name for t in threading.enumerate()}
+            for ident, frame in sys._current_frames().items():
+                stack = tb.extract_stack(frame)[-5:]
+                where = " <- ".join(f"{os.path.basename(f.filename)}:{f.lineno}:{f.name}" for f in reversed(stack))
+                out.append(f"  thread {names.get(ident, ident)}: {where}")
+            holders = []
+            for pid in filter(str.isdigit, os.listdir("/proc")):
+                try:
+                    for fd in os.listdir(f"/proc/{pid}/fd"):
+                        try:
+                            if os.path.realpath(f"/proc/{pid}/fd/{fd}").startswith(real):
+                                with open(f"/proc/{pid}/cmdline", "rb") as f:
+                                    holders.append((pid, f.read().replace(b"\0", b" ").decode()[:80]))
+                                break
+                        except OSError:
+                            pass
+                except OSError:
+                    pass
+            out.append("  processes with db open: " + (", ".join(f"{p} ({c})" for p, c in holders) or "none visible"))
+            try:
+                with open("/proc/locks") as f:
+                    mine = [l.strip() for l in f if f":{st.st_ino} " in l]
+                out.append("  kernel locks on db: " + (" | ".join(mine) or "none"))
+            except OSError:
+                out.append("  /proc/locks unavailable")
+        except Exception as e:
+            out.append(f"diagnose_lock failed: {e}")
+        return "\n".join(out)
 
     def release_message(self, message_id):
         """Un-claim a message that failed part-way (e.g. on a database lock)
