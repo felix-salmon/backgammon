@@ -19,8 +19,10 @@ import base64
 import html
 import os
 import re
+import sqlite3
 import tempfile
 import threading
+import traceback
 
 from flask import Flask, request, Response
 
@@ -56,6 +58,7 @@ _NEW_GAME_RE = re.compile(
     r"^new\s*game\s*:?\s*([^\s,]+@[^\s,]+)[,\s]+(.+)$", re.IGNORECASE
 )
 store = Store(DB_PATH)
+print(f"[startup] pid={os.getpid()} WEB_CONCURRENCY={os.environ.get('WEB_CONCURRENCY')} db={DB_PATH}")
 reminders.start_background_loop(store)
 
 app = Flask(__name__)
@@ -222,7 +225,44 @@ def _finish(message_id):
 
 @app.route("/inbound", methods=["POST"])
 def inbound():
+    """Wrapper around _inbound_impl: if anything unexpected blows up, log
+    the full traceback and email the exact error to the sender (and the
+    NOTIFY_WAITING_EMAILS list) instead of returning an opaque 500 that
+    ImprovMX just keeps retrying. Returns 204 so it stops retrying."""
     payload = request.get_json(force=True, silent=True) or {}
+    try:
+        return _inbound_impl(payload)
+    except Exception as e:
+        if isinstance(e, sqlite3.OperationalError) and "locked" in str(e).lower():
+            # Transient: something else holds the database's write lock.
+            # Answer 503 (not 204) so ImprovMX keeps retrying with its
+            # backoff -- the message was never claimed, so a retry is safe.
+            print(f"[inbound] database locked, asking sender to retry: {e}")
+            return ("database busy, retry", 503, {"Retry-After": "30"})
+        tb = traceback.format_exc()
+        print(f"[inbound error] {tb}")
+        try:
+            msg = parse_inbound_improvmx(payload)
+            sender, subject = msg["sender"], msg["subject"]
+        except Exception:
+            sender, subject = "", payload.get("subject", "")
+        tail = "\n".join(tb.strip().splitlines()[-12:])
+        text = (f"Something went wrong on the server handling this message, so it was "
+                f"NOT applied -- please resend it once this is fixed.\n\n"
+                f"Subject: {subject}\n"
+                f"Error: {type(e).__name__}: {e}\n\n{tail}")
+        for to in ({sender} | NOTIFY_WAITING_EMAILS) - {""}:
+            _bg(send_text_email, to, "Backgammon server error", text)
+        mid = payload.get("message-id")
+        if mid:
+            try:
+                store.finish_message(mid)
+            except Exception:
+                pass
+        return ("", 204)
+
+
+def _inbound_impl(payload):
 
     # Webhook senders retry on timeouts and network hiccups as standard
     # practice -- ImprovMX includes a stable message-id we can use to make
