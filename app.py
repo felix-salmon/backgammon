@@ -238,6 +238,8 @@ def inbound():
             # Answer 503 (not 204) so ImprovMX keeps retrying with its
             # backoff -- the message was never claimed, so a retry is safe.
             print(f"[inbound] database locked, asking sender to retry: {e}")
+            if payload.get("message-id"):
+                store.release_message(payload["message-id"])
             return ("database busy, retry", 503, {"Retry-After": "30"})
         tb = traceback.format_exc()
         print(f"[inbound error] {tb}")

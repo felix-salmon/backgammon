@@ -84,7 +84,28 @@ class Store:
 
     def __init__(self, path="backgammon.db"):
         self.path = path
-        with closing(sqlite3.connect(self.path)) as con:
+        # A locked database at startup must never crash the whole app: the
+        # web process would die while booting, Render would restart it into
+        # the same lock, and the public URL would sit at 502 until someone
+        # intervened. Retry briefly (kept under gunicorn's 30s worker boot
+        # timeout), then carry on without migrating -- the schema already
+        # exists on any database that has been booted once, and requests
+        # will simply retry on their own once the lock clears.
+        for attempt in range(2):
+            try:
+                self._init_schema()
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e).lower():
+                    raise
+                print(f"[state.py] database locked during startup (attempt {attempt + 1}/2): {e}")
+                time.sleep(1)
+        print("[state.py] STARTING WITHOUT SCHEMA CHECK: database stayed locked. "
+              "Something else has the database file open -- check for a shell/sqlite3 "
+              "session or a second instance.")
+
+    def _init_schema(self):
+        with closing(sqlite3.connect(self.path, timeout=3)) as con:
             try:
                 con.execute("PRAGMA journal_mode=DELETE")
             except sqlite3.OperationalError:
@@ -134,9 +155,9 @@ class Store:
         single clean 'database is locked' error. 4 seconds keeps a
         single request's total worst case (even across a few of these
         calls back to back) safely under that ceiling."""
-        return sqlite3.connect(self.path, timeout=4)
+        return sqlite3.connect(self.path, timeout=3)
 
-    def _with_lock_retry(self, fn, attempts=2, backoff=1.0):
+    def _with_lock_retry(self, fn, attempts=2, backoff=0.5):
         """Run fn() (a zero-argument callable doing the actual database
         work), retrying once more with short backoff specifically on
         'database is locked' -- e.g. a write landing at the same moment
@@ -391,6 +412,18 @@ class Store:
                     return True
                 return False
         return self._with_lock_retry(attempt)
+
+    def release_message(self, message_id):
+        """Un-claim a message that failed part-way (e.g. on a database lock)
+        so the sender's webhook retry is processed instead of being treated
+        as a duplicate of a half-handled attempt."""
+        try:
+            with closing(self._connect()) as con:
+                con.execute("DELETE FROM processed_messages WHERE message_id=? AND status='pending'",
+                            (message_id,))
+                con.commit()
+        except sqlite3.Error:
+            pass  # best effort; the 60s pending-claim takeover still applies
 
     def finish_message(self, message_id):
         """Mark a claimed message as fully handled. Call this only once
