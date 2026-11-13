@@ -20,6 +20,7 @@ import html
 import os
 import re
 import sqlite3
+import sys
 import tempfile
 import threading
 import time
@@ -224,6 +225,53 @@ def _finish(message_id):
     return ("", 204)
 
 
+# ---- slow-request watchdog ------------------------------------------------
+# gunicorn kills a worker that's busy for 30s ("WORKER TIMEOUT") without
+# saying WHAT it was busy with. This logs, after SLOW_REQUEST_SECONDS, which
+# request it is (and which email, for /inbound) plus the exact line each
+# thread is stuck on, so a hang can be diagnosed from the logs afterwards.
+SLOW_REQUEST_SECONDS = 10
+WATCHDOG_INTERVAL = 2
+_active_requests = {}      # thread ident -> [start_time, description, reported?]
+
+
+@app.before_request
+def _track_request_start():
+    _active_requests[threading.get_ident()] = [time.time(), f"{request.method} {request.path}", False]
+
+
+@app.teardown_request
+def _track_request_end(exc=None):
+    entry = _active_requests.pop(threading.get_ident(), None)
+    if entry and entry[2]:
+        print(f"[slow request finished] {entry[1]} took {time.time() - entry[0]:.1f}s")
+
+
+def _describe_inbound(payload):
+    try:
+        sender = (payload.get("from") or {}).get("email", "?")
+        return f"POST /inbound from={sender} subject={str(payload.get('subject', ''))[:90]!r}"
+    except Exception:
+        return "POST /inbound"
+
+
+def _watchdog_loop():
+    while True:
+        time.sleep(WATCHDOG_INTERVAL)
+        try:
+            now = time.time()
+            for ident, entry in list(_active_requests.items()):
+                if not entry[2] and now - entry[0] > SLOW_REQUEST_SECONDS:
+                    entry[2] = True
+                    frame = sys._current_frames().get(ident)
+                    stack = "".join(traceback.format_stack(frame)[-8:]) if frame else "(no frame)"
+                    print(f"[slow request] {entry[1]} running {now - entry[0]:.0f}s. Stuck at:\n{stack}")
+        except Exception as e:
+            print(f"[watchdog error] {e}")
+
+
+threading.Thread(target=_watchdog_loop, daemon=True, name="request-watchdog").start()
+
 _last_lock_diag = 0.0
 
 
@@ -234,6 +282,8 @@ def inbound():
     NOTIFY_WAITING_EMAILS list) instead of returning an opaque 500 that
     ImprovMX just keeps retrying. Returns 204 so it stops retrying."""
     payload = request.get_json(force=True, silent=True) or {}
+    if threading.get_ident() in _active_requests:
+        _active_requests[threading.get_ident()][1] = _describe_inbound(payload)
     try:
         return _inbound_impl(payload)
     except Exception as e:

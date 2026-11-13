@@ -24,7 +24,8 @@ import os
 import re
 import smtplib
 from email.message import EmailMessage
-from email.utils import make_msgid
+from email.utils import make_msgid, formatdate
+from email.headerregistry import Address
 
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.improvmx.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
@@ -219,6 +220,18 @@ def _require_smtp_config():
         )
 
 
+def _to_header(addrs):
+    """Recipients as 'name <addr>' pairs. A bare 'a@b.c' To: header trips
+    SpamAssassin's TO_NO_BRKTS_* rules (the email library drops the angle
+    brackets when there's no display name), so give each address a display
+    name -- the local part -- which keeps the brackets."""
+    out = []
+    for a in addrs:
+        a = a.strip()
+        out.append(Address(display_name=a.split("@")[0], addr_spec=a))
+    return out
+
+
 def _send(msg, retries=4, retry_delays=(5, 15, 30)):
     """Send via SMTP, retrying on transient connection failures before
     giving up and letting the caller's error handling take over. The
@@ -227,6 +240,14 @@ def _send(msg, retries=4, retry_delays=(5, 15, 30)):
     provider-side blip can last a couple of minutes, not just a second."""
     _require_smtp_config()
     import time
+    # Some receiving filters (ImprovMX's SpamAssassin, notably) score mail
+    # with no Date or Message-ID header as spam (MISSING_DATE, MISSING_MID)
+    # -- and not every SMTP relay adds them for us. Always set both.
+    if "Date" not in msg:
+        msg["Date"] = formatdate(localtime=True)
+    if "Message-ID" not in msg:
+        domain = (SMTP_FROM.rsplit("@", 1)[-1] if "@" in (SMTP_FROM or "") else None) or "localhost"
+        msg["Message-ID"] = make_msgid(domain=domain)
     last_err = None
     for attempt in range(retries):
         try:
@@ -319,7 +340,7 @@ def send_board_email(to_addrs, subject, image_path, summary_lines=None,
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = f"Backgammon <{SMTP_FROM}>"
-    msg["To"] = ", ".join(to_addrs)
+    msg["To"] = _to_header(to_addrs)
     msg.set_content(text_body)
 
     html = f"""\
@@ -355,7 +376,7 @@ def send_text_email(to_addr, subject, body):
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = f"Backgammon <{SMTP_FROM}>"
-    msg["To"] = to_addr
+    msg["To"] = _to_header([to_addr])
     msg.set_content(body)
     _send(msg)
 
