@@ -20,6 +20,7 @@ import html
 import os
 import re
 import sqlite3
+import state
 import sys
 import tempfile
 import threading
@@ -61,7 +62,6 @@ _NEW_GAME_RE = re.compile(
 )
 store = Store(DB_PATH)
 print(f"[startup] pid={os.getpid()} WEB_CONCURRENCY={os.environ.get('WEB_CONCURRENCY')} db={DB_PATH}")
-reminders.start_background_loop(store)
 
 app = Flask(__name__)
 
@@ -270,7 +270,34 @@ def _watchdog_loop():
             print(f"[watchdog error] {e}")
 
 
-threading.Thread(target=_watchdog_loop, daemon=True, name="request-watchdog").start()
+
+# Background threads must start INSIDE the serving process, never at import
+# time: under gunicorn the app can be imported in the arbiter and the worker
+# forked later. A thread caught mid-query at fork time leaves the child with
+# a connection holding a SQLite read lock that no thread will ever release,
+# which blocks every write ("database is locked") until restart.
+_threads_pid = None
+_threads_lock = threading.Lock()
+
+
+def ensure_background_threads():
+    global _threads_pid
+    pid = os.getpid()
+    if _threads_pid == pid:
+        return
+    with _threads_lock:
+        if _threads_pid == pid:
+            return
+        _threads_pid = pid
+        threading.Thread(target=_watchdog_loop, daemon=True, name="request-watchdog").start()
+        reminders.start_background_loop(store)
+        print(f"[startup] background threads started in pid={pid}")
+
+
+@app.before_request
+def _start_threads_once():
+    ensure_background_threads()
+
 
 _last_lock_diag = 0.0
 
@@ -292,6 +319,7 @@ def inbound():
             # Answer 503 (not 204) so ImprovMX keeps retrying with its
             # backoff -- the message was never claimed, so a retry is safe.
             print(f"[inbound] database locked, asking sender to retry: {e}")
+            state.reap_leaked_connections()
             global _last_lock_diag
             if time.time() - _last_lock_diag > 60:     # at most once a minute
                 _last_lock_diag = time.time()

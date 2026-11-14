@@ -5,6 +5,8 @@ Enough for a couple of friends running a handful of games at once.
 
 import json
 import threading
+import traceback
+import weakref
 import os
 import sqlite3
 import time
@@ -55,6 +57,61 @@ UNIQUE_PAIR_LABEL_INDEX_SQL = (
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_games_pair_label "
     "ON games(white_email, black_email, label)"
 )
+
+
+
+# ---- leaked-connection tracking ------------------------------------------
+# Production showed this app's OWN process holding a SQLite read (SHARED)
+# lock for minutes with no thread using the database -- which blocks every
+# writer's commit with "database is locked" until the process restarts.
+# Every connection we open is therefore registered here with its creation
+# time and the code location that created it. No request legitimately holds
+# a connection anywhere near LEAK_AGE_SECONDS, so any still-open connection
+# older than that is a leak: reap_leaked_connections() closes it (releasing
+# the lock) and logs where it came from.
+LEAK_AGE_SECONDS = 45
+_LIVE_CONNECTIONS = weakref.WeakSet()
+
+
+class _TrackedConnection(sqlite3.Connection):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._born = time.time()
+        frames = traceback.extract_stack(limit=7)[:-1]
+        self._where = " <- ".join(
+            f"{os.path.basename(f.filename)}:{f.lineno}:{f.name}" for f in reversed(frames))
+        _LIVE_CONNECTIONS.add(self)
+
+
+def _is_open(con):
+    try:
+        con.total_changes          # raises ProgrammingError on a closed connection
+        return True
+    except sqlite3.ProgrammingError:
+        return False
+
+
+def open_connections():
+    """[(age_seconds, creator_stack)] for every still-open tracked connection."""
+    now = time.time()
+    return [(now - c._born, c._where) for c in list(_LIVE_CONNECTIONS) if _is_open(c)]
+
+
+def reap_leaked_connections(max_age=LEAK_AGE_SECONDS):
+    """Close tracked connections that have been open longer than max_age.
+    Returns the number closed; logs each one with where it was created."""
+    n = 0
+    now = time.time()
+    for c in list(_LIVE_CONNECTIONS):
+        try:
+            if _is_open(c) and now - c._born > max_age:
+                print(f"[leak reaper] closing a connection open {now - c._born:.0f}s, "
+                      f"created at: {c._where}")
+                c.close()
+                n += 1
+        except Exception as e:
+            print(f"[leak reaper] error: {e}")
+    return n
 
 
 class Store:
@@ -157,7 +214,7 @@ class Store:
         single clean 'database is locked' error. 4 seconds keeps a
         single request's total worst case (even across a few of these
         calls back to back) safely under that ceiling."""
-        return sqlite3.connect(self.path, timeout=3)
+        return sqlite3.connect(self.path, timeout=3, factory=_TrackedConnection)
 
     def _with_lock_retry(self, fn, attempts=2, backoff=0.5):
         """Run fn() (a zero-argument callable doing the actual database
@@ -172,11 +229,21 @@ class Store:
         than a lock error is never retried -- it's re-raised
         immediately, since retrying wouldn't help."""
         delay = backoff
-        for attempt in range(attempts):
+        attempt = 0
+        reaped_once = False
+        while True:
             try:
                 return fn()
             except sqlite3.OperationalError as e:
-                if "locked" not in str(e).lower() or attempt == attempts - 1:
+                if "locked" not in str(e).lower():
+                    raise
+                attempt += 1
+                # A lock that doesn't clear may be OUR OWN leaked connection
+                # (see reap_leaked_connections) -- free it, retry once free.
+                if not reaped_once and reap_leaked_connections():
+                    reaped_once = True
+                    continue
+                if attempt >= attempts:
                     raise
                 time.sleep(delay)
                 delay *= 2
@@ -439,6 +506,9 @@ class Store:
                 stack = tb.extract_stack(frame)[-5:]
                 where = " <- ".join(f"{os.path.basename(f.filename)}:{f.lineno}:{f.name}" for f in reversed(stack))
                 out.append(f"  thread {names.get(ident, ident)}: {where}")
+            opens = open_connections()
+            out.append("  open tracked connections: " + (
+                "; ".join(f"age {a:.0f}s from {w}" for a, w in opens) if opens else "none"))
             holders = []
             for pid in filter(str.isdigit, os.listdir("/proc")):
                 try:
