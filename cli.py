@@ -76,11 +76,11 @@ def main():
 
         message = ""
         if text.lower() not in ("manual", "auto", "roll", "double", "take", "accept",
-                                 "drop", "pass", "resign", "greedy"):
+                                 "drop", "pass", "decline", "fold", "concede", "refuse", "resign", "greedy"):
             message = input("Message to include (optional): ").strip()
 
         sender = g.to_move
-        if g.awaiting == "double_response" and text.lower() in ("take", "accept", "drop", "pass"):
+        if g.awaiting == "double_response" and text.lower() in ("take", "accept", "drop", "pass", "decline", "fold", "concede", "refuse"):
             from board import other
             sender = other(g.pending_doubler)
 

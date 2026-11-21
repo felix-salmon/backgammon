@@ -25,7 +25,8 @@ If a double is offered, the *other* player is asked to reply with either:
 
     take / accept   -- cube value doubles, they now own the cube, and
                         the doubler rolls and continues their turn
-    drop / pass     -- they concede the game at the current cube value
+    drop / pass / decline / fold / concede / refuse
+                    -- they concede the game at the current cube value
 
 Sending "auto" switches the sender back to automatic rolling at any
 point (and, if it's their own turn and they were mid-decision about
@@ -259,7 +260,11 @@ class Game:
             result = self._cmd_double(sender_player, message)
         elif cmd in ("take", "accept"):
             result = self._cmd_take(sender_player, message)
-        elif cmd in ("drop", "pass"):
+        elif cmd in ("drop", "pass", "decline", "fold", "concede") or (
+                cmd == "refuse" and self.awaiting == AWAIT_DOUBLE_RESPONSE
+                and self.pending_undo_by is None):
+            # "refuse" otherwise means refusing an undo request (below);
+            # it only declines a double when no undo request is pending.
             result = self._cmd_drop(sender_player, message)
         elif cmd == "resign":
             result = self._cmd_resign(sender_player, message)
